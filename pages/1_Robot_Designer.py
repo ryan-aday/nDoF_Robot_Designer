@@ -16,7 +16,9 @@ from utils.robot import (
 )
 
 
-def render_robot_plot(positions: np.ndarray, target: np.ndarray, redundant: int) -> go.Figure:
+def render_robot_plot(
+    positions: np.ndarray, target: np.ndarray, end_effector: np.ndarray, redundant: int
+) -> go.Figure:
     fig = go.Figure()
     fig.add_trace(
         go.Scatter3d(
@@ -31,6 +33,16 @@ def render_robot_plot(positions: np.ndarray, target: np.ndarray, redundant: int)
     )
     fig.add_trace(
         go.Scatter3d(
+            x=[end_effector[0]],
+            y=[end_effector[1]],
+            z=[end_effector[2]],
+            mode="markers",
+            marker=dict(size=7, color="#6a0dad"),
+            name="End effector",
+        )
+    )
+    fig.add_trace(
+        go.Scatter3d(
             x=[target[0]],
             y=[target[1]],
             z=[target[2]],
@@ -40,10 +52,11 @@ def render_robot_plot(positions: np.ndarray, target: np.ndarray, redundant: int)
         )
     )
     fig.update_layout(
-        scene=dict(xaxis_title="X", yaxis_title="Y", zaxis_title="Z"),
+        scene=dict(xaxis_title="X", yaxis_title="Y", zaxis_title="Z", aspectmode="data"),
         height=600,
         legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
         title=f"Robot visualization{' — ' + str(redundant) + ' redundant DoF' if redundant else ''}",
+        uirevision="robot-view",
     )
     return fig
 
@@ -267,7 +280,8 @@ def main():
         )
 
     positions = robot.joint_positions(st.session_state.joint_states)
-    fig = render_robot_plot(positions, target_point, robot.redundant_dof)
+    end_effector = positions[-1]
+    fig = render_robot_plot(positions, target_point, end_effector, robot.redundant_dof)
 
     # Animation between home and target
     home_state = np.array(start_states)
@@ -285,7 +299,21 @@ def main():
                         y=frame_positions[:, 1],
                         z=frame_positions[:, 2],
                         mode="lines+markers",
-                    )
+                    ),
+                    go.Scatter3d(
+                        x=[frame_positions[-1, 0]],
+                        y=[frame_positions[-1, 1]],
+                        z=[frame_positions[-1, 2]],
+                        mode="markers",
+                        marker=dict(size=7, color="#6a0dad"),
+                    ),
+                    go.Scatter3d(
+                        x=[target_point[0]],
+                        y=[target_point[1]],
+                        z=[target_point[2]],
+                        mode="markers",
+                        marker=dict(size=6, color="#d62728"),
+                    ),
                 ],
                 name=f"frame{i}",
             )
@@ -303,7 +331,10 @@ def main():
                     {
                         "label": "Play 60 FPS loop",
                         "method": "animate",
-                        "args": [None, {"frame": {"duration": 16, "redraw": True}, "fromcurrent": True, "mode": "immediate"}],
+                        "args": [
+                            None,
+                            {"frame": {"duration": 16, "redraw": False}, "fromcurrent": True, "mode": "immediate"},
+                        ],
                     }
                 ],
             }
@@ -314,7 +345,6 @@ def main():
     st.plotly_chart(fig, use_container_width=True, config={"scrollZoom": True})
 
     st.subheader("Reach target evaluation")
-    end_effector = positions[-1]
     st.write(
         f"Current end-effector position: {end_effector.round(3)} | Target: {target_point.round(3)} | Residual: {(target_point - end_effector).round(4)}"
     )
