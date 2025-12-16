@@ -11,9 +11,11 @@ from utils.robot import (
     damped_least_squares_ik,
     gradient_descent_ik,
     joint_summary,
+    matrix_projection_ik,
     newton_raphson_ik,
     reachability_report,
     screw_enhanced_ik,
+    transform_from_target_to_start,
 )
 
 
@@ -321,6 +323,7 @@ def main():
             "Newton-Raphson",
             "Gradient descent",
             "Screw-enhanced adaptive",
+            "Matrix projection",
         ],
         index=0,
         help="Choose between classic numerical IK or a screw-theory-inspired adaptive variant from recent literature.",
@@ -345,6 +348,13 @@ def main():
             target_point = np.array([target_x, target_y, target_z])
     st.session_state.target_point = target_point
 
+    delta_tf = transform_from_target_to_start(robot, target_point, start_states)
+    with st.expander("Target-to-start transform (for transparency)"):
+        st.write(
+            "Relative transform from the current end-effector pose to the target (pure translation target frame):"
+        )
+        st.write(delta_tf)
+
     # IK solve
     feasible, reachability_reasons = reachability_report(robot, target_point, start_states)
     if not feasible:
@@ -364,6 +374,10 @@ def main():
         elif solver == "Gradient descent":
             ik_states, converged, trajectory = gradient_descent_ik(
                 robot, target_point, st.session_state.joint_states, step_size=0.05, max_iters=max_steps
+            )
+        elif solver == "Matrix projection":
+            ik_states, converged, trajectory = matrix_projection_ik(
+                robot, target_point, st.session_state.joint_states, max_iters=max_steps
             )
         else:
             ik_states, converged, trajectory = screw_enhanced_ik(

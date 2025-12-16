@@ -227,15 +227,24 @@ def _monotonic_step(
     mins = np.array([j.min_state for j in robot.joints])
     maxs = np.array([j.max_state for j in robot.joints])
 
+    best_states = states
+    best_error = current_error_norm
+    best_transforms = transforms
+
     for scale in scales:
         candidate = np.clip(states + scale * delta, mins, maxs)
         cand_transforms = robot.homogenous_transforms(candidate)
         cand_error_norm = np.linalg.norm(target - cand_transforms[-1][:3, 3])
-        if cand_error_norm < current_error_norm - 1e-9:
-            return candidate, cand_error_norm, cand_transforms, True
+        if cand_error_norm < best_error - 1e-9:
+            best_states = candidate
+            best_error = cand_error_norm
+            best_transforms = cand_transforms
+            if cand_error_norm < current_error_norm - 1e-9:
+                return candidate, cand_error_norm, cand_transforms, True
 
-    # No improvement found
-    return states, current_error_norm, transforms, False
+    # Fall back to the best reduction even if the scale loop did not strictly improve
+    improved = best_error < current_error_norm - 1e-9
+    return best_states, best_error, best_transforms, improved
 
 
 def damped_least_squares_ik(
@@ -269,6 +278,47 @@ def damped_least_squares_ik(
             return states, True, trajectory
         if not improved:
             break
+    return states, False, trajectory
+
+
+def matrix_projection_ik(
+    robot: RobotModel,
+    target: np.ndarray,
+    initial_states: Sequence[float],
+    max_iters: int = 400,
+    tol: float = 1e-3,
+) -> Tuple[np.ndarray, bool, List[np.ndarray]]:
+    """Solve IK via basic matrix projection using the translational Jacobian.
+
+    This method builds the transform from the current end-effector pose to the
+    target (translation-only), then repeatedly applies a least-squares update
+    using the positional Jacobian. It is intentionally simple matrix math to
+    satisfy scenarios where a direct projection along a single local axis should
+    reach the target without solver wandering.
+    """
+
+    states = np.array(initial_states, dtype=float)
+    trajectory: List[np.ndarray] = [states.copy()]
+    transforms = robot.homogenous_transforms(states)
+    current = transforms[-1][:3, 3]
+    error = target - current
+    current_error_norm = np.linalg.norm(error)
+    if current_error_norm < tol:
+        return states, True, trajectory
+
+    for _ in range(max_iters):
+        J_pos = _jacobian(robot, transforms)[:3, :]
+        delta, *_ = np.linalg.lstsq(J_pos, error, rcond=None)
+        states, current_error_norm, transforms, improved = _monotonic_step(
+            robot, states, delta, target, transforms, current_error_norm, scales=(1.0, 0.75, 0.5, 0.25, 0.1, 0.05)
+        )
+        error = target - transforms[-1][:3, 3]
+        trajectory.append(states.copy())
+        if current_error_norm < tol:
+            return states, True, trajectory
+        if not improved:
+            break
+
     return states, False, trajectory
 
 
@@ -473,6 +523,24 @@ def reachability_report(
 
     feasible = len(reasons) == 0
     return feasible, reasons
+
+
+def transform_from_target_to_start(
+    robot: RobotModel, target: np.ndarray, start_states: Sequence[float]
+) -> np.ndarray:
+    """Return the homogeneous transform that maps the start end-effector pose to the target.
+
+    The method computes the current end-effector transform from the provided
+    start states, constructs a pure-translation target transform, and returns
+    the relative matrix the chain would need to realize. It uses only basic
+    matrix algebra and can be surfaced in the UI for transparency when
+    diagnosing convergence.
+    """
+
+    start_tf = robot.homogenous_transforms(start_states)[-1]
+    target_tf = np.eye(4)
+    target_tf[:3, 3] = target
+    return np.linalg.inv(start_tf) @ target_tf
 
 
 def spherical_adjust(target: np.ndarray, delta_radius: float) -> np.ndarray:
