@@ -12,6 +12,7 @@ from utils.robot import (
     gradient_descent_ik,
     joint_summary,
     newton_raphson_ik,
+    reachable_distance,
     screw_enhanced_ik,
 )
 
@@ -344,23 +345,35 @@ def main():
             target_point = np.array([target_x, target_y, target_z])
     st.session_state.target_point = target_point
 
+    reachable = reachable_distance(robot)
+    effective_target = target_point
+    unreachable_reason = ""
+    target_dist = float(np.linalg.norm(target_point))
+    if target_dist > reachable + 1e-6:
+        scale = reachable / target_dist if target_dist > 1e-9 else 0.0
+        effective_target = target_point * scale
+        unreachable_reason = (
+            f"Target distance {target_dist:.3f} m exceeds straight-line reach {reachable:.3f} m; "
+            "solving toward the closest reachable point instead."
+        )
+
     # IK solve
     if solver == "Damped least squares":
-        ik_states, converged, trajectory = damped_least_squares_ik(
-            robot, target_point, st.session_state.joint_states, damping=0.02, max_iters=max_steps
+        ik_states, converged, trajectory, failure_reason = damped_least_squares_ik(
+            robot, effective_target, st.session_state.joint_states, damping=0.02, max_iters=max_steps
         )
     elif solver == "Newton-Raphson":
-        ik_states, converged, trajectory = newton_raphson_ik(
-            robot, target_point, st.session_state.joint_states, max_iters=max_steps
+        ik_states, converged, trajectory, failure_reason = newton_raphson_ik(
+            robot, effective_target, st.session_state.joint_states, max_iters=max_steps
         )
     elif solver == "Gradient descent":
-        ik_states, converged, trajectory = gradient_descent_ik(
-            robot, target_point, st.session_state.joint_states, step_size=0.05, max_iters=max_steps
+        ik_states, converged, trajectory, failure_reason = gradient_descent_ik(
+            robot, effective_target, st.session_state.joint_states, step_size=0.05, max_iters=max_steps
         )
     else:
-        ik_states, converged, trajectory = screw_enhanced_ik(
+        ik_states, converged, trajectory, failure_reason = screw_enhanced_ik(
             robot,
-            target_point,
+            effective_target,
             st.session_state.joint_states,
             step_size=0.06,
             damping_base=0.015,
@@ -369,9 +382,14 @@ def main():
         )
     st.session_state.joint_states = ik_states.tolist()
 
+    if unreachable_reason:
+        st.error(unreachable_reason)
+
     if not converged:
+        detailed_reason = failure_reason or "Inverse kinematics did not converge."
         st.error(
-            "Inverse kinematics did not converge. Adjust start states, link sizes, or target location to improve reach."
+            detailed_reason
+            + " Adjust start states, link sizes, or target location to improve reach."
         )
 
     transforms = robot.homogenous_transforms(st.session_state.joint_states)
@@ -427,8 +445,12 @@ def main():
     st.plotly_chart(fig, use_container_width=True, config={"scrollZoom": True})
 
     st.subheader("Reach target evaluation")
+    effective_note = " (projected reachable point)" if unreachable_reason else ""
     st.write(
-        f"Current end-effector position: {end_effector.round(3)} | Target: {target_point.round(3)} | Residual: {(target_point - end_effector).round(4)}"
+        f"Current end-effector position: {end_effector.round(3)} | Target: {target_point.round(3)}"
+    )
+    st.write(
+        f"Residual to target: {(target_point - end_effector).round(4)} | Solver goal{effective_note}: {(effective_target - end_effector).round(4)}"
     )
 
     st.subheader("Download report")
@@ -448,6 +470,8 @@ def main():
         "ik_solution": ik_states.tolist(),
         "solver_max_steps": max_steps,
         "solver_trajectory": [state.tolist() for state in trajectory],
+        "solver_failure_reason": failure_reason,
+        "unreachable_reason": unreachable_reason,
         "animation_frames": animation_frames,
         "animation_path": [state.tolist() for state in path_states],
     }
