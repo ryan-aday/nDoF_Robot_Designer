@@ -196,6 +196,30 @@ def _jacobian(robot: RobotModel, transforms: List[np.ndarray], target: np.ndarra
     return np.array(J_cols).T  # 6 x n
 
 
+def _accept_step(
+    robot: RobotModel,
+    states: np.ndarray,
+    delta: np.ndarray,
+    target: np.ndarray,
+    transforms: List[np.ndarray],
+    current_error_norm: float,
+    scales: Tuple[float, ...] = (1.0, 0.5, 0.25, 0.1, 0.05),
+) -> Tuple[np.ndarray, float, List[np.ndarray], bool]:
+    """Try scaled updates that monotonically reduce end-effector error."""
+
+    mins = np.array([j.min_state for j in robot.joints])
+    maxs = np.array([j.max_state for j in robot.joints])
+
+    for scale in scales:
+        candidate = np.clip(states + scale * delta, mins, maxs)
+        cand_transforms = robot.homogenous_transforms(candidate)
+        cand_error_norm = np.linalg.norm(target - cand_transforms[-1][:3, 3])
+        if cand_error_norm < current_error_norm - 1e-9:
+            return candidate, cand_error_norm, cand_transforms, True
+
+    return states, current_error_norm, transforms, False
+
+
 def damped_least_squares_ik(
     robot: RobotModel,
     target: np.ndarray,
@@ -206,19 +230,27 @@ def damped_least_squares_ik(
 ) -> Tuple[np.ndarray, bool, List[np.ndarray]]:
     states = np.array(initial_states, dtype=float)
     trajectory: List[np.ndarray] = [states.copy()]
-    for _ in range(max_iters):
-        transforms = robot.homogenous_transforms(states)
-        current = transforms[-1][:3, 3]
-        error = target - current
-        if np.linalg.norm(error) < tol:
-            return states, True, trajectory
+    transforms = robot.homogenous_transforms(states)
+    current = transforms[-1][:3, 3]
+    error = target - current
+    current_error_norm = np.linalg.norm(error)
+    if current_error_norm < tol:
+        return states, True, trajectory
 
+    for _ in range(max_iters):
         J = _jacobian(robot, transforms, target)
         J_pos = J[:3, :]
         damping_matrix = (damping**2) * np.eye(J_pos.shape[0])
         delta = J_pos.T @ np.linalg.inv(J_pos @ J_pos.T + damping_matrix) @ error
-        states = np.clip(states + delta, [j.min_state for j in robot.joints], [j.max_state for j in robot.joints])
+        states, current_error_norm, transforms, improved = _accept_step(
+            robot, states, delta, target, transforms, current_error_norm
+        )
+        error = target - transforms[-1][:3, 3]
         trajectory.append(states.copy())
+        if current_error_norm < tol:
+            return states, True, trajectory
+        if not improved:
+            break
     return states, False, trajectory
 
 
@@ -231,18 +263,26 @@ def newton_raphson_ik(
 ) -> Tuple[np.ndarray, bool, List[np.ndarray]]:
     states = np.array(initial_states, dtype=float)
     trajectory: List[np.ndarray] = [states.copy()]
-    for _ in range(max_iters):
-        transforms = robot.homogenous_transforms(states)
-        current = transforms[-1][:3, 3]
-        error = target - current
-        if np.linalg.norm(error) < tol:
-            return states, True, trajectory
+    transforms = robot.homogenous_transforms(states)
+    current = transforms[-1][:3, 3]
+    error = target - current
+    current_error_norm = np.linalg.norm(error)
+    if current_error_norm < tol:
+        return states, True, trajectory
 
+    for _ in range(max_iters):
         J = _jacobian(robot, transforms, target)
         J_pos = J[:3, :]
         delta = np.linalg.pinv(J_pos) @ error
-        states = np.clip(states + delta, [j.min_state for j in robot.joints], [j.max_state for j in robot.joints])
+        states, current_error_norm, transforms, improved = _accept_step(
+            robot, states, delta, target, transforms, current_error_norm
+        )
+        error = target - transforms[-1][:3, 3]
         trajectory.append(states.copy())
+        if current_error_norm < tol:
+            return states, True, trajectory
+        if not improved:
+            break
     return states, False, trajectory
 
 
@@ -256,18 +296,26 @@ def gradient_descent_ik(
 ) -> Tuple[np.ndarray, bool, List[np.ndarray]]:
     states = np.array(initial_states, dtype=float)
     trajectory: List[np.ndarray] = [states.copy()]
-    for _ in range(max_iters):
-        transforms = robot.homogenous_transforms(states)
-        current = transforms[-1][:3, 3]
-        error = target - current
-        if np.linalg.norm(error) < tol:
-            return states, True, trajectory
+    transforms = robot.homogenous_transforms(states)
+    current = transforms[-1][:3, 3]
+    error = target - current
+    current_error_norm = np.linalg.norm(error)
+    if current_error_norm < tol:
+        return states, True, trajectory
 
+    for _ in range(max_iters):
         J = _jacobian(robot, transforms, target)
         J_pos = J[:3, :]
         delta = step_size * (J_pos.T @ error)
-        states = np.clip(states + delta, [j.min_state for j in robot.joints], [j.max_state for j in robot.joints])
+        states, current_error_norm, transforms, improved = _accept_step(
+            robot, states, delta, target, transforms, current_error_norm
+        )
+        error = target - transforms[-1][:3, 3]
         trajectory.append(states.copy())
+        if current_error_norm < tol:
+            return states, True, trajectory
+        if not improved:
+            break
     return states, False, trajectory
 
 
@@ -293,13 +341,14 @@ def screw_enhanced_ik(
     prev_delta = np.zeros_like(states)
     trajectory: List[np.ndarray] = [states.copy()]
 
-    for _ in range(max_iters):
-        transforms = robot.homogenous_transforms(states)
-        current = transforms[-1][:3, 3]
-        error = target - current
-        if np.linalg.norm(error) < tol:
-            return states, True, trajectory
+    transforms = robot.homogenous_transforms(states)
+    current = transforms[-1][:3, 3]
+    error = target - current
+    current_error_norm = np.linalg.norm(error)
+    if current_error_norm < tol:
+        return states, True, trajectory
 
+    for _ in range(max_iters):
         J = _jacobian(robot, transforms, target)
         J_pos = J[:3, :]
 
@@ -318,9 +367,16 @@ def screw_enhanced_ik(
         delta = step_size * (weighted_J.T @ np.linalg.solve(lhs, error))
         delta += momentum * prev_delta
 
-        states = np.clip(states + delta, [j.min_state for j in robot.joints], [j.max_state for j in robot.joints])
+        states, current_error_norm, transforms, improved = _accept_step(
+            robot, states, delta, target, transforms, current_error_norm
+        )
+        error = target - transforms[-1][:3, 3]
         prev_delta = delta
         trajectory.append(states.copy())
+        if current_error_norm < tol:
+            return states, True, trajectory
+        if not improved:
+            break
 
     return states, False, trajectory
 
