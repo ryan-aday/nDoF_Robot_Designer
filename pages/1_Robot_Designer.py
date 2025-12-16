@@ -16,11 +16,25 @@ from utils.robot import (
 )
 
 
-def render_robot_plot(
-    positions: np.ndarray, target: np.ndarray, end_effector: np.ndarray, redundant: int
-) -> go.Figure:
-    fig = go.Figure()
-    fig.add_trace(
+def build_frame_data(robot, positions, transforms, target):
+    end_effector = positions[-1]
+
+    revolute_x: List[float] = []
+    revolute_y: List[float] = []
+    revolute_z: List[float] = []
+    for i, joint in enumerate(robot.joints):
+        if joint.joint_type != "revolute":
+            continue
+        origin = positions[i]
+        axis_world = transforms[i][:3, :3] @ joint.axis
+        axis_dir = axis_world / (np.linalg.norm(axis_world) + 1e-9)
+        cylinder_length = max(0.02, 0.35 * robot.links[i].length)
+        tip = origin + cylinder_length * axis_dir
+        revolute_x.extend([origin[0], tip[0], None])
+        revolute_y.extend([origin[1], tip[1], None])
+        revolute_z.extend([origin[2], tip[2], None])
+
+    traces = [
         go.Scatter3d(
             x=[0.0],
             y=[0.0],
@@ -28,9 +42,7 @@ def render_robot_plot(
             mode="markers",
             marker=dict(size=6, color="#2ca02c"),
             name="Origin",
-        )
-    )
-    fig.add_trace(
+        ),
         go.Scatter3d(
             x=positions[:, 0],
             y=positions[:, 1],
@@ -38,10 +50,16 @@ def render_robot_plot(
             mode="lines+markers",
             marker=dict(size=5, color="#1f77b4"),
             line=dict(width=5, color="#1f77b4"),
-            name="Robot Chain",
-        )
-    )
-    fig.add_trace(
+            name="Robot legs",
+        ),
+        go.Scatter3d(
+            x=revolute_x,
+            y=revolute_y,
+            z=revolute_z,
+            mode="lines",
+            line=dict(width=6, color="#2ecc71"),
+            name="Revolute joints (cylinders)",
+        ),
         go.Scatter3d(
             x=[end_effector[0]],
             y=[end_effector[1]],
@@ -49,9 +67,7 @@ def render_robot_plot(
             mode="markers",
             marker=dict(size=7, color="#6a0dad"),
             name="End effector",
-        )
-    )
-    fig.add_trace(
+        ),
         go.Scatter3d(
             x=[target[0]],
             y=[target[1]],
@@ -59,8 +75,13 @@ def render_robot_plot(
             mode="markers",
             marker=dict(size=6, color="#d62728"),
             name="Target",
-        )
-    )
+        ),
+    ]
+    return traces
+
+
+def render_robot_plot(robot, positions: np.ndarray, transforms, target: np.ndarray, redundant: int) -> go.Figure:
+    fig = go.Figure(data=build_frame_data(robot, positions, transforms, target))
     all_points = np.vstack([positions, target.reshape(1, 3), np.zeros((1, 3))])
     x_min, x_max = all_points[:, 0].min(), all_points[:, 0].max()
     y_min, y_max = all_points[:, 1].min(), all_points[:, 1].max()
@@ -111,8 +132,10 @@ def main():
         help="Choose whether all joints share the same motion range or each joint can be tuned individually.",
     )
     default_length = st.sidebar.number_input("Default link length (m)", 0.05, 2.0, 0.25, 0.05)
-    default_width = st.sidebar.number_input("Default link width (m)", 0.01, 0.5, 0.05, 0.01)
-    default_depth = st.sidebar.number_input("Default link depth (m)", 0.01, 0.5, 0.05, 0.01)
+    default_area = st.sidebar.number_input(
+        "Default cross-sectional area (m²)", 1e-4, 0.2, 0.0025, 0.0001,
+        help="Used to compute inertia assuming a square cross section; can vary per joint.",
+    )
     default_mass = st.sidebar.number_input("Default link mass (kg)", 0.1, 20.0, 1.5, 0.1)
     gravity = st.sidebar.number_input(
         "Gravity (m/s²)", min_value=0.0, max_value=30.0, value=9.81, step=0.01, help="Set the gravitational acceleration used for torque estimates."
@@ -143,8 +166,7 @@ def main():
             "Joint": i + 1,
             "Type": default_types[i] if i < len(default_types) else "revolute",
             "Length (m)": default_length,
-            "Width (m)": default_width,
-            "Depth (m)": default_depth,
+            "Cross-sectional area (m²)": default_area,
             "Mass (kg)": default_mass,
             "Start (rad/m)": _default_start(i, default_types[i] if i < len(default_types) else "revolute"),
             "Min (rad/m)": default_revolute_min if default_types[i] == "revolute" else -default_length,
@@ -161,8 +183,7 @@ def main():
             help="Toggle joint actuation type; defaults favor the minimal efficient mix.",
         ),
         "Length (m)": st.column_config.NumberColumn(min_value=0.01, step=0.01),
-        "Width (m)": st.column_config.NumberColumn(min_value=0.005, step=0.005),
-        "Depth (m)": st.column_config.NumberColumn(min_value=0.005, step=0.005),
+        "Cross-sectional area (m²)": st.column_config.NumberColumn(min_value=1e-4, step=1e-4),
         "Mass (kg)": st.column_config.NumberColumn(min_value=0.01, step=0.05),
         "Start (rad/m)": st.column_config.NumberColumn(
             help="Initial joint state (radians for revolute, meters for prismatic) to avoid singular home poses.",
@@ -193,8 +214,7 @@ def main():
 
     solved_dof = len(edited)
     link_lengths = [row["Length (m)"] for row in edited]
-    link_widths = [row["Width (m)"] for row in edited]
-    link_depths = [row["Depth (m)"] for row in edited]
+    link_areas = [row["Cross-sectional area (m²)"] for row in edited]
     link_masses = [row["Mass (kg)"] for row in edited]
     joint_types = [row["Type"] for row in edited]
     joint_notes = [row["Note"] for row in edited]
@@ -223,8 +243,7 @@ def main():
 
     if homogeneous == "Homogeneous":
         link_lengths = [default_length] * solved_dof
-        link_widths = [default_width] * solved_dof
-        link_depths = [default_depth] * solved_dof
+        link_areas = [default_area] * solved_dof
         link_masses = [default_mass] * solved_dof
 
     if limit_mode == "Homogeneous limits":
@@ -236,8 +255,7 @@ def main():
         allow_prismatic=allow_prismatic,
         prismatic_count=prismatic_count,
         link_lengths=link_lengths,
-        link_widths=link_widths,
-        link_depths=link_depths,
+        link_areas=link_areas,
         link_masses=link_masses,
         joint_types=joint_types,
         joint_notes=joint_notes,
@@ -293,7 +311,16 @@ def main():
         max_value=1200,
         value=400,
         step=25,
-        help="Control how many update steps the chosen solver can take to seek the target (and shape the displayed optimal path).",
+        help="Control how many update steps the chosen solver can take to seek the target.",
+    )
+
+    animation_frames = st.slider(
+        "Animation frames from start to end",
+        min_value=60,
+        max_value=1800,
+        value=360,
+        step=30,
+        help="Frames for the 60 FPS playback; each is an even slice between the home pose and the solved pose (regardless of solver iterations).",
     )
 
     solver = st.selectbox(
@@ -357,55 +384,21 @@ def main():
             "Inverse kinematics did not converge. Adjust start states, link sizes, or target location to improve reach."
         )
 
-    positions = robot.joint_positions(st.session_state.joint_states)
+    transforms = robot.homogenous_transforms(st.session_state.joint_states)
+    positions = np.array([t[:3, 3] for t in transforms])
     end_effector = positions[-1]
-    fig = render_robot_plot(positions, target_point, end_effector, robot.redundant_dof)
+    fig = render_robot_plot(robot, positions, transforms, target_point, robot.redundant_dof)
 
-    # Animation follows the solver's trajectory (optimal path) between home and target
+    # Animation evenly interpolates between the home pose and the solved pose (not solver iterations)
     home_state = np.array(start_states)
-    path_states = [np.array(s) for s in trajectory] if len(trajectory) > 0 else [home_state, ik_states]
-    if not np.allclose(path_states[0], home_state):
-        path_states.insert(0, home_state)
-    if not np.allclose(path_states[-1], ik_states):
-        path_states.append(ik_states)
+    alphas = np.linspace(0.0, 1.0, num=animation_frames + 1)
+    path_states = [home_state + alpha * (ik_states - home_state) for alpha in alphas]
 
     frames: List[go.Frame] = []
     for i, state in enumerate(path_states):
-        frame_positions = robot.joint_positions(state)
-        frames.append(
-            go.Frame(
-                data=[
-                    go.Scatter3d(
-                        x=[0.0],
-                        y=[0.0],
-                        z=[0.0],
-                        mode="markers",
-                        marker=dict(size=6, color="#2ca02c"),
-                    ),
-                    go.Scatter3d(
-                        x=frame_positions[:, 0],
-                        y=frame_positions[:, 1],
-                        z=frame_positions[:, 2],
-                        mode="lines+markers",
-                    ),
-                    go.Scatter3d(
-                        x=[frame_positions[-1, 0]],
-                        y=[frame_positions[-1, 1]],
-                        z=[frame_positions[-1, 2]],
-                        mode="markers",
-                        marker=dict(size=7, color="#6a0dad"),
-                    ),
-                    go.Scatter3d(
-                        x=[target_point[0]],
-                        y=[target_point[1]],
-                        z=[target_point[2]],
-                        mode="markers",
-                        marker=dict(size=6, color="#d62728"),
-                    ),
-                ],
-                name=f"frame{i}",
-            )
-        )
+        frame_transforms = robot.homogenous_transforms(state)
+        frame_positions = np.array([t[:3, 3] for t in frame_transforms])
+        frames.append(go.Frame(data=build_frame_data(robot, frame_positions, frame_transforms, target_point), name=f"frame{i}"))
 
     fig.frames = frames
     fig.update_layout(
@@ -458,7 +451,9 @@ def main():
         "start_states": start_states,
         "ik_solution": ik_states.tolist(),
         "solver_max_steps": max_steps,
-        "solver_trajectory": [state.tolist() for state in path_states],
+        "solver_trajectory": [state.tolist() for state in trajectory],
+        "animation_frames": animation_frames,
+        "animation_path": [state.tolist() for state in path_states],
     }
     st.download_button("Download JSON report", data=json.dumps(report, indent=2), file_name="robot_report.json")
 

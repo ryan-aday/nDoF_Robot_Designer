@@ -25,14 +25,16 @@ def rotation_matrix(axis: np.ndarray, theta: float) -> np.ndarray:
 @dataclass
 class Link:
     length: float
-    width: float
-    depth: float
+    cross_section_area: float
     mass: float
 
     def inertia_tensor(self) -> Tuple[float, float, float]:
-        ix = (1 / 12) * self.mass * (self.depth**2 + self.width**2)
-        iy = (1 / 12) * self.mass * (self.length**2 + self.depth**2)
-        iz = (1 / 12) * self.mass * (self.length**2 + self.width**2)
+        """Estimate inertia assuming a square cross section from provided area."""
+
+        side = math.sqrt(max(self.cross_section_area, 1e-9))
+        ix = (1 / 6) * self.mass * (side**2)
+        iy = (1 / 12) * self.mass * (self.length**2 + side**2)
+        iz = (1 / 12) * self.mass * (self.length**2 + side**2)
         return ix, iy, iz
 
 
@@ -99,8 +101,7 @@ def build_robot(
     allow_prismatic: bool,
     prismatic_count: int,
     link_lengths: Sequence[float],
-    link_widths: Sequence[float],
-    link_depths: Sequence[float],
+    link_areas: Sequence[float],
     link_masses: Sequence[float],
     joint_types: Sequence[JointType] | None = None,
     joint_notes: Sequence[str] | None = None,
@@ -118,8 +119,7 @@ def build_robot(
     solved_dof = min(
         max(1, dof),
         len(link_lengths),
-        len(link_widths),
-        len(link_depths),
+        len(link_areas),
         len(link_masses),
         len(joint_types) if joint_types is not None else dof,
     )
@@ -157,8 +157,7 @@ def build_robot(
         links.append(
             Link(
                 length=link_lengths[i],
-                width=link_widths[i],
-                depth=link_depths[i],
+                cross_section_area=link_areas[i],
                 mass=link_masses[i],
             )
         )
@@ -391,6 +390,7 @@ def joint_summary(robot: RobotModel) -> List[dict]:
                 "Type": joint.joint_type,
                 "Axis": joint.axis.tolist(),
                 "Length (m)": link.length,
+                "Cross-sectional area (m²)": link.cross_section_area,
                 "Mass (kg)": link.mass,
                 "Inertia (Ix, Iy, Iz)": (ix, iy, iz),
                 "Range (min, max)": (joint.min_state, joint.max_state),
