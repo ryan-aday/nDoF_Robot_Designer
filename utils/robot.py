@@ -153,6 +153,7 @@ def build_robot(
             axis = AXES[i % len(AXES)]
         if np.linalg.norm(axis) < 1e-8:
             axis = AXES[i % len(AXES)]
+        axis = axis / np.linalg.norm(axis)
         default_min = -math.pi if joint_types[i] == "revolute" else -link_lengths[i]
         default_max = math.pi if joint_types[i] == "revolute" else link_lengths[i]
         joints.append(
@@ -419,16 +420,20 @@ def joint_summary(robot: RobotModel) -> List[dict]:
     return summary
 
 
-def reachability_report(robot: RobotModel, target: np.ndarray) -> Tuple[bool, List[str]]:
-    """Coarse reachability analysis to explain impossible targets.
+def reachability_report(
+    robot: RobotModel, target: np.ndarray, states: Sequence[float] | None = None
+) -> Tuple[bool, List[str]]:
+    """Reachability analysis that respects local joint axes and limits.
 
-    The check assumes a serial chain and uses generous upper bounds based on link
-    lengths and prismatic ranges. It is intentionally conservative so that any
-    "unreachable" verdict is backed by a clear geometric reason rather than
-    solver heuristics.
+    The check combines a generous geometric bound with a local translational
+    Jacobian rank test so that axis selections (e.g., all Z-axes) that confine
+    motion to a plane or line are reported explicitly. The Jacobian uses the
+    current/home pose, meaning axes are interpreted in their *local* frames and
+    rotated by upstream joints.
     """
 
     reasons: List[str] = []
+
     link_lengths = np.array([link.length for link in robot.links])
     prismatic_spans = np.array(
         [
@@ -443,6 +448,27 @@ def reachability_report(robot: RobotModel, target: np.ndarray) -> Tuple[bool, Li
     if distance > max_reach + 1e-6:
         reasons.append(
             f"Target is {distance:.3f} m from the origin, exceeding the generous reach bound of {max_reach:.3f} m."
+        )
+
+    # Local-axis-aware mobility check at the current/home pose
+    if states is None:
+        home_states = np.zeros(len(robot.joints))
+    else:
+        home_states = np.array(states, dtype=float)
+    transforms = robot.homogenous_transforms(home_states)
+    J_pos = _jacobian(robot, transforms)[:3, :]
+    current_pos = transforms[-1][:3, 3]
+    displacement = target - current_pos
+
+    col_space_proj = J_pos @ np.linalg.pinv(J_pos) @ displacement
+    residual_component = displacement - col_space_proj
+    residual_norm = float(np.linalg.norm(residual_component))
+    rank = int(np.linalg.matrix_rank(J_pos))
+
+    if rank < 3 and residual_norm > 1e-4:
+        reasons.append(
+            "Joint axis arrangement limits translation (rank "
+            f"{rank}) so the remaining {residual_norm:.4f} m toward the target lies outside the local motion subspace."
         )
 
     feasible = len(reasons) == 0

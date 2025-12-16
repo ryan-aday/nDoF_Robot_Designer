@@ -346,7 +346,7 @@ def main():
     st.session_state.target_point = target_point
 
     # IK solve
-    feasible, reachability_reasons = reachability_report(robot, target_point)
+    feasible, reachability_reasons = reachability_report(robot, target_point, start_states)
     if not feasible:
         st.error("Target is unreachable with the current geometry:\n" + "\n".join(reachability_reasons))
         ik_states = np.array(start_states)
