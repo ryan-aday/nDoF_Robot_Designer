@@ -11,9 +11,12 @@ from utils.robot import (
     damped_least_squares_ik,
     gradient_descent_ik,
     joint_summary,
+    matrix_projection_ik,
     newton_raphson_ik,
     reachability_report,
+    sample_workspace_points,
     screw_enhanced_ik,
+    transform_from_target_to_start,
 )
 
 
@@ -166,7 +169,7 @@ def main():
         "Axis": st.column_config.SelectboxColumn(
             "Rotation/translation axis",
             options=axis_options,
-            help="Set the LOCAL revolute rotation axis or prismatic translation axis per joint (XYZ basis).",
+            help="Set the revolute rotation axis or prismatic translation axis per joint (XYZ basis).",
         ),
         "Length (m)": st.column_config.NumberColumn(min_value=0.01, step=0.01),
         "Cross-sectional area (m²)": st.column_config.NumberColumn(min_value=1e-4, step=1e-4),
@@ -280,8 +283,7 @@ def main():
     st.write(
         "Drag inside the plot to rotate the view. Define a 3D target relative to the robot origin, tune solver type/steps, and set motion ranges before playing the 60 FPS start→target motion (no stepwise jog buttons)."
     )
-    st.caption("Use the start (rad/m) column to set a non-singular home pose; the animation interpolates from that pose to the target solution.")
-    st.info("Joint axes are interpreted in each joint's LOCAL frame. Collinear local axes limit reachable directions even when link lengths are sufficient.")
+    st.caption("Use the start (rad/m) column to set your preferred home pose (singular poses are allowed); the animation interpolates from that pose to the target solution.")
 
     if "joint_states" not in st.session_state or len(st.session_state.joint_states) != robot.dof:
         st.session_state.joint_states = start_states
@@ -322,6 +324,7 @@ def main():
             "Newton-Raphson",
             "Gradient descent",
             "Screw-enhanced adaptive",
+            "Matrix projection",
         ],
         index=0,
         help="Choose between classic numerical IK or a screw-theory-inspired adaptive variant from recent literature.",
@@ -346,6 +349,13 @@ def main():
             target_point = np.array([target_x, target_y, target_z])
     st.session_state.target_point = target_point
 
+    delta_tf = transform_from_target_to_start(robot, target_point, start_states)
+    with st.expander("Target-to-start transform (for transparency)"):
+        st.write(
+            "Relative transform from the current end-effector pose to the target (pure translation target frame):"
+        )
+        st.write(delta_tf)
+
     # IK solve
     feasible, reachability_reasons = reachability_report(robot, target_point, start_states)
     if not feasible:
@@ -365,6 +375,10 @@ def main():
         elif solver == "Gradient descent":
             ik_states, converged, trajectory = gradient_descent_ik(
                 robot, target_point, st.session_state.joint_states, step_size=0.05, max_iters=max_steps
+            )
+        elif solver == "Matrix projection":
+            ik_states, converged, trajectory = matrix_projection_ik(
+                robot, target_point, st.session_state.joint_states, max_iters=max_steps
             )
         else:
             ik_states, converged, trajectory = screw_enhanced_ik(
@@ -446,6 +460,102 @@ def main():
     st.write(
         f"Current end-effector position: {end_effector.round(3)} | Target: {target_point.round(3)} | Residual: {(target_point - end_effector).round(4)}"
     )
+
+    st.subheader("Workspace point cloud")
+    cloud_samples = st.slider(
+        "Number of workspace samples",
+        min_value=200,
+        max_value=4000,
+        value=1200,
+        step=200,
+        help="Random joint-state samples used to visualize the reachable workspace as a point cloud.",
+    )
+
+    if "workspace_cloud" not in st.session_state:
+        st.session_state.workspace_cloud = sample_workspace_points(robot, samples=cloud_samples)
+
+    regenerate = st.button(
+        "Generate workspace cloud", help="Refresh the workspace samples with the current limits and axes."
+    )
+    if regenerate:
+        st.session_state.workspace_cloud = sample_workspace_points(robot, samples=cloud_samples)
+
+    cloud_points = st.session_state.get("workspace_cloud", np.empty((0, 3)))
+    if not regenerate and len(cloud_points) != cloud_samples:
+        st.session_state.workspace_cloud = sample_workspace_points(robot, samples=cloud_samples)
+        cloud_points = st.session_state.workspace_cloud
+    cloud_fig = go.Figure()
+    if len(cloud_points) > 0:
+        cloud_fig.add_trace(
+            go.Scatter3d(
+                x=cloud_points[:, 0],
+                y=cloud_points[:, 1],
+                z=cloud_points[:, 2],
+                mode="markers",
+                marker=dict(size=2, color="rgba(100,100,100,0.45)"),
+                name="Workspace samples",
+            )
+        )
+
+    cloud_fig.add_trace(
+        go.Scatter3d(
+            x=[0.0],
+            y=[0.0],
+            z=[0.0],
+            mode="markers",
+            marker=dict(size=6, color="#2ca02c"),
+            name="Origin",
+        )
+    )
+    cloud_fig.add_trace(
+        go.Scatter3d(
+            x=[end_effector[0]],
+            y=[end_effector[1]],
+            z=[end_effector[2]],
+            mode="markers",
+            marker=dict(size=7, color="#6a0dad"),
+            name="End effector",
+        )
+    )
+    cloud_fig.add_trace(
+        go.Scatter3d(
+            x=[target_point[0]],
+            y=[target_point[1]],
+            z=[target_point[2]],
+            mode="markers",
+            marker=dict(size=6, color="#d62728"),
+            name="Target",
+        )
+    )
+
+    if len(cloud_points) > 0:
+        combined = np.vstack([cloud_points, target_point.reshape(1, 3), end_effector.reshape(1, 3), np.zeros((1, 3))])
+        x_min, x_max = combined[:, 0].min(), combined[:, 0].max()
+        y_min, y_max = combined[:, 1].min(), combined[:, 1].max()
+        z_min, z_max = combined[:, 2].min(), combined[:, 2].max()
+        pad = 0.1 * max(x_max - x_min, y_max - y_min, z_max - z_min, 1e-3)
+    else:
+        pad = 0.1
+        x_min = y_min = z_min = -0.5
+        x_max = y_max = z_max = 0.5
+
+    cloud_fig.update_layout(
+        scene=dict(
+            xaxis=dict(range=[x_min - pad, x_max + pad]),
+            yaxis=dict(range=[y_min - pad, y_max + pad]),
+            zaxis=dict(range=[z_min - pad, z_max + pad]),
+            aspectmode="cube",
+            xaxis_title="X",
+            yaxis_title="Y",
+            zaxis_title="Z",
+        ),
+        height=500,
+        legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
+        title="Reachable workspace samples",
+        uirevision="workspace-view",
+    )
+
+    st.plotly_chart(cloud_fig, use_container_width=True, config={"scrollZoom": True})
 
     st.subheader("Download report")
     report = {
