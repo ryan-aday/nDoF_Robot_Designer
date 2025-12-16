@@ -1,4 +1,5 @@
 import json
+import math
 from typing import List
 
 import numpy as np
@@ -71,8 +72,17 @@ def main():
     default_width = st.sidebar.number_input("Default link width (m)", 0.01, 0.5, 0.05, 0.01)
     default_depth = st.sidebar.number_input("Default link depth (m)", 0.01, 0.5, 0.05, 0.01)
     default_mass = st.sidebar.number_input("Default link mass (kg)", 0.1, 20.0, 1.5, 0.1)
+    gravity = st.sidebar.number_input(
+        "Gravity (m/s²)", min_value=0.0, max_value=30.0, value=9.81, step=0.01, help="Set the gravitational acceleration used for torque estimates."
+    )
 
     default_types = ["prismatic" if allow_prismatic and i < prismatic_count else "revolute" for i in range(desired_dof)]
+
+    def _default_start(idx: int, joint_type: str) -> float:
+        if joint_type == "prismatic":
+            return 0.05
+        direction = 1 if idx % 2 == 0 else -1
+        return 0.2 * direction
 
     editor_data = [
         {
@@ -82,6 +92,7 @@ def main():
             "Width (m)": default_width,
             "Depth (m)": default_depth,
             "Mass (kg)": default_mass,
+            "Start (rad/m)": _default_start(i, default_types[i] if i < len(default_types) else "revolute"),
             "Note": "",
         }
         for i in range(max(1, desired_dof))
@@ -97,6 +108,10 @@ def main():
         "Width (m)": st.column_config.NumberColumn(min_value=0.005, step=0.005),
         "Depth (m)": st.column_config.NumberColumn(min_value=0.005, step=0.005),
         "Mass (kg)": st.column_config.NumberColumn(min_value=0.01, step=0.05),
+        "Start (rad/m)": st.column_config.NumberColumn(
+            help="Initial joint state (radians for revolute, meters for prismatic) to avoid singular home poses.",
+            step=0.01,
+        ),
         "Note": st.column_config.TextColumn(help="Add per-joint notes; they flow into the summary and report."),
     }
 
@@ -119,6 +134,18 @@ def main():
     link_masses = [row["Mass (kg)"] for row in edited]
     joint_types = [row["Type"] for row in edited]
     joint_notes = [row["Note"] for row in edited]
+    start_states = [row.get("Start (rad/m)", 0.0) for row in edited]
+
+    invalid_starts: List[str] = []
+    for idx, (jt, start, length) in enumerate(zip(joint_types, start_states, link_lengths), start=1):
+        if jt == "revolute" and abs(start) > math.pi:
+            invalid_starts.append(f"Joint {idx}: start angle exceeds ±π rad; solver may be unstable.")
+        if jt == "prismatic" and abs(start) > 2 * length:
+            invalid_starts.append(
+                f"Joint {idx}: prismatic start ({start:.2f} m) exceeds twice its link length ({length:.2f} m) and may be unreachable."
+            )
+    if invalid_starts:
+        st.warning("Start states outside typical bounds:\n" + "\n".join(invalid_starts))
 
     if homogeneous == "Homogeneous":
         link_lengths = [default_length] * solved_dof
@@ -136,6 +163,7 @@ def main():
         link_masses=link_masses,
         joint_types=joint_types,
         joint_notes=joint_notes,
+        gravity=gravity,
     )
 
     st.subheader("Joint solution")
@@ -156,17 +184,28 @@ def main():
     torque_budget = robot.torque_budget(payload_mass=payload_mass)
     st.write("Torque/force budget per joint (outermost to base):")
     st.write({f"J{i+1}": round(t, 3) for i, t in enumerate(torque_budget)})
+    st.caption(f"Gravity applied: {robot.gravity:.3f} m/s² (Earth ≈ 9.81 m/s² by default).")
 
     st.divider()
     st.subheader("Dynamics-aware visualization")
     st.write(
         "Drag inside the plot to rotate the view. Define a 3D target relative to the robot origin, then play the 60 FPS start→target motion (no stepwise jog buttons)."
     )
+    st.caption("Use the start (rad/m) column to set a non-singular home pose; the animation interpolates from that pose to the target solution.")
 
     if "joint_states" not in st.session_state or len(st.session_state.joint_states) != robot.dof:
-        st.session_state.joint_states = [0.0] * robot.dof
+        st.session_state.joint_states = start_states
+    elif len(start_states) == robot.dof and st.session_state.get("synced_from_editor") is not True:
+        st.session_state.joint_states = start_states
+    st.session_state.synced_from_editor = False
 
     target_point = st.session_state.get("target_point", np.array([sum(link_lengths), 0.0, 0.0]))
+
+    max_reach = sum(link_lengths) + sum(abs(s) for jt, s in zip(joint_types, start_states) if jt == "prismatic")
+    if np.linalg.norm(target_point) > max_reach + 1e-6:
+        st.warning(
+            "Target lies beyond the nominal reach of the chain; convergence may fail. Reduce distance or extend link lengths/prismatic travel."
+        )
 
     solver = st.selectbox(
         "Inverse-kinematics solver",
@@ -224,14 +263,14 @@ def main():
 
     if not converged:
         st.error(
-            "Inverse kinematics did not converge. Adjust link sizes or target location to improve reach."
+            "Inverse kinematics did not converge. Adjust start states, link sizes, or target location to improve reach."
         )
 
     positions = robot.joint_positions(st.session_state.joint_states)
     fig = render_robot_plot(positions, target_point, robot.redundant_dof)
 
     # Animation between home and target
-    home_state = np.zeros(robot.dof)
+    home_state = np.array(start_states)
     frames: List[go.Frame] = []
     n_frames = 120
     for i in range(n_frames + 1):
@@ -287,10 +326,12 @@ def main():
         "solver": solver,
         "joints": summary_table,
         "torque_budget": torque_budget,
+        "gravity": robot.gravity,
         "target": target_point.tolist(),
         "end_effector": end_effector.tolist(),
         "converged": converged,
         "home_state": home_state.tolist(),
+        "start_states": start_states,
         "ik_solution": ik_states.tolist(),
     }
     st.download_button("Download JSON report", data=json.dumps(report, indent=2), file_name="robot_report.json")

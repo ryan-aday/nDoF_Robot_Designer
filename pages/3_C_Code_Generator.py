@@ -104,6 +104,7 @@ def main():
         "ik_solution": [0.35, -0.2, 0.12],
         "target": [0.55, 0.1, 0.05],
         "solver": "Damped least squares",
+        "gravity": 9.81,
     }
 
     report = default_report
@@ -117,6 +118,7 @@ def main():
     joints_data = report.get("joints", default_report["joints"])
     dof = len(joints_data)
     st.write(f"Loaded DoF: {dof}")
+    st.write(f"Gravity used in report: {report.get('gravity', 9.81)} m/s²")
 
     st.subheader("Joint table (editable)")
     edited_joints = st.data_editor(
@@ -177,6 +179,7 @@ def main():
             "joints": edited_joints,
             "home_state": start_state,
             "ik_solution": target_state,
+            "gravity": report.get("gravity", 9.81),
             "codegen": {"steps": steps, "frame_ms": frame_ms},
             "c_code": c_code,
         }

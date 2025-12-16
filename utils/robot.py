@@ -102,6 +102,7 @@ def build_robot(
     link_masses: Sequence[float],
     joint_types: Sequence[JointType] | None = None,
     joint_notes: Sequence[str] | None = None,
+    gravity: float = 9.81,
 ) -> RobotModel:
     """Construct a RobotModel from user-edited link and joint tables.
 
@@ -152,7 +153,14 @@ def build_robot(
     user_notes = [note for note in joint_notes if note]
     notes.extend(user_notes)
 
-    robot = RobotModel(dof=solved_dof, links=links, joints=joints, redundant_dof=redundant, notes=notes)
+    robot = RobotModel(
+        dof=solved_dof,
+        links=links,
+        joints=joints,
+        gravity=gravity,
+        redundant_dof=redundant,
+        notes=notes,
+    )
     robot.torque_budget()
     return robot
 
