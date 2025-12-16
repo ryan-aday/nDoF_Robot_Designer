@@ -54,16 +54,16 @@ def build_frame_data(
             axis_world = axis_world / axis_norm
 
             cyl_length = max(0.02, robot.joints[idx - 1].body_length)
-            start_offset = prev - axis_world * (cyl_length / 2)
-            end_offset = prev + axis_world * (cyl_length / 2)
+            body_tip = prev + axis_world * cyl_length
 
-            legs_x.extend([prev[0], start_offset[0], None, end_offset[0], curr[0], None])
-            legs_y.extend([prev[1], start_offset[1], None, end_offset[1], curr[1], None])
-            legs_z.extend([prev[2], start_offset[2], None, end_offset[2], curr[2], None])
+            # Keep legs connected at the joint midpoint and suppress the opposite extension
+            legs_x.extend([prev[0], curr[0], None])
+            legs_y.extend([prev[1], curr[1], None])
+            legs_z.extend([prev[2], curr[2], None])
 
-            revolute_x.extend([start_offset[0], end_offset[0], None])
-            revolute_y.extend([start_offset[1], end_offset[1], None])
-            revolute_z.extend([start_offset[2], end_offset[2], None])
+            revolute_x.extend([prev[0], body_tip[0], None])
+            revolute_y.extend([prev[1], body_tip[1], None])
+            revolute_z.extend([prev[2], body_tip[2], None])
         else:
             legs_x.extend([prev[0], curr[0], None])
             legs_y.extend([prev[1], curr[1], None])
