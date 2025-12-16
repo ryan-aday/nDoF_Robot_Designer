@@ -5,6 +5,7 @@ from typing import List
 import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
+from scipy.spatial import ConvexHull, QhullError
 
 from utils.robot import (
     build_robot,
@@ -284,7 +285,10 @@ def main():
     st.divider()
     st.subheader("Dynamics-aware visualization")
     st.write(
-        "Drag inside the plot to rotate the view. Define a 3D target relative to the robot origin, tune solver type/steps, and set motion ranges before playing the 60 FPS start→target motion (no stepwise jog buttons)."
+        "Drag inside the plot to rotate the view. Define a 3D target relative to the robot origin, tune solver steps, and play the 60 FPS start→target motion (no stepwise jog buttons)."
+    )
+    st.caption(
+        "The forward finite (DH-inspired) solver is the default and authoritative placement method. Legacy inverse-kinematics functions remain available for diagnostics but are not relied on for target placement."
     )
     st.caption("Use the start (rad/m) column to set your preferred home pose (singular poses are allowed); the animation interpolates from that pose to the target solution.")
 
@@ -308,31 +312,33 @@ def main():
         max_value=1200,
         value=400,
         step=25,
-        help="Control how many update steps the chosen solver can take to seek the target.",
+        help="Control how many update steps the forward finite solver can take to seek the target.",
     )
 
     animation_frames = st.slider(
         "Animation frames from start to end",
         min_value=60,
         max_value=1800,
-        value=360,
+        value=60,
         step=30,
         help="Frames for the 60 FPS playback; each is an even slice between the home pose and the solved pose (regardless of solver iterations).",
     )
 
-    solver = st.selectbox(
-        "Inverse-kinematics solver",
+    diagnostic_solver = st.selectbox(
+        "Optional legacy IK diagnostic (not used for placement)",
         [
+            "None (use forward finite only)",
             "Damped least squares",
             "Newton-Raphson",
             "Gradient descent",
             "Screw-enhanced adaptive",
             "Matrix projection",
-            "Forward finite (DH-based)",
         ],
         index=0,
-        help="Choose between classic numerical IK, screw-theory-inspired adaptive updates, or a forward-kinematics finite-difference solver (DH-style).",
+        help="Legacy inverse-kinematics routines are available for troubleshooting but are not relied upon for end-effector placement.",
     )
+
+    solver = "Forward finite (DH-based default)"
 
     with st.form("target_form"):
         col_tx, col_ty, col_tz = st.columns(3)
@@ -370,6 +376,7 @@ def main():
             f"Home-pose manipulability metric: {manip:.4e} (condition number {cond:.1f})."
         )
 
+    diag_residual_value = None
     # IK solve
     feasible, reachability_reasons = reachability_report(robot, target_point, start_states)
     if not feasible:
@@ -377,37 +384,40 @@ def main():
         ik_states = np.array(start_states)
         trajectory: List[np.ndarray] = [ik_states.copy()]
         converged = False
+        diag_result = None
     else:
-        if solver == "Damped least squares":
-            ik_states, converged, trajectory = damped_least_squares_ik(
-                robot, target_point, st.session_state.joint_states, damping=0.02, max_iters=max_steps
-            )
-        elif solver == "Newton-Raphson":
-            ik_states, converged, trajectory = newton_raphson_ik(
-                robot, target_point, st.session_state.joint_states, max_iters=max_steps
-            )
-        elif solver == "Gradient descent":
-            ik_states, converged, trajectory = gradient_descent_ik(
-                robot, target_point, st.session_state.joint_states, step_size=0.05, max_iters=max_steps
-            )
-        elif solver == "Matrix projection":
-            ik_states, converged, trajectory = matrix_projection_ik(
-                robot, target_point, st.session_state.joint_states, max_iters=max_steps
-            )
-        elif solver == "Forward finite (DH-based)":
-            ik_states, converged, trajectory = forward_finite_ik(
-                robot, target_point, st.session_state.joint_states, max_iters=max_steps
-            )
-        else:
-            ik_states, converged, trajectory = screw_enhanced_ik(
-                robot,
-                target_point,
-                st.session_state.joint_states,
-                step_size=0.06,
-                damping_base=0.015,
-                momentum=0.12,
-                max_iters=max_steps,
-            )
+        ik_states, converged, trajectory = forward_finite_ik(
+            robot, target_point, st.session_state.joint_states, max_iters=max_steps
+        )
+
+        diag_result = None
+        if diagnostic_solver != "None (use forward finite only)":
+            if diagnostic_solver == "Damped least squares":
+                diag_result = damped_least_squares_ik(
+                    robot, target_point, st.session_state.joint_states, damping=0.02, max_iters=max_steps
+                )
+            elif diagnostic_solver == "Newton-Raphson":
+                diag_result = newton_raphson_ik(
+                    robot, target_point, st.session_state.joint_states, max_iters=max_steps
+                )
+            elif diagnostic_solver == "Gradient descent":
+                diag_result = gradient_descent_ik(
+                    robot, target_point, st.session_state.joint_states, step_size=0.05, max_iters=max_steps
+                )
+            elif diagnostic_solver == "Matrix projection":
+                diag_result = matrix_projection_ik(
+                    robot, target_point, st.session_state.joint_states, max_iters=max_steps
+                )
+            else:
+                diag_result = screw_enhanced_ik(
+                    robot,
+                    target_point,
+                    st.session_state.joint_states,
+                    step_size=0.06,
+                    damping_base=0.015,
+                    momentum=0.12,
+                    max_iters=max_steps,
+                )
         st.session_state.joint_states = ik_states.tolist()
 
         if not converged:
@@ -420,7 +430,15 @@ def main():
             reason_lines = [f"Residual remained at {final_error:.4f} m despite monotonic steps."]
             if at_limits:
                 reason_lines.append("Joint limits reached: " + ", ".join(at_limits))
-            st.error("Inverse kinematics did not converge:\n" + "\n".join(reason_lines))
+            st.error("Forward finite solver did not converge:\n" + "\n".join(reason_lines))
+        if diag_result:
+            diag_states, diag_converged, _ = diag_result
+            diag_residual = float(np.linalg.norm(target_point - robot.homogenous_transforms(diag_states)[-1][:3, 3]))
+            diag_residual_value = diag_residual
+            st.info(
+                f"Diagnostic {diagnostic_solver} residual: {diag_residual:.4f} m (converged={diag_converged}). "
+                "Legacy solvers are provided for analysis only and are not used for placement."
+            )
 
     transforms = robot.homogenous_transforms(st.session_state.joint_states)
     positions = np.array([t[:3, 3] for t in transforms])
@@ -479,14 +497,34 @@ def main():
         f"Current end-effector position: {end_effector.round(3)} | Target: {target_point.round(3)} | Residual: {(target_point - end_effector).round(4)}"
     )
 
-    st.subheader("Workspace point cloud")
+    st.subheader("End-effector motion profile")
+    trajectory_positions = [robot.homogenous_transforms(state)[-1][:3, 3] for state in trajectory]
+    residuals = [float(np.linalg.norm(target_point - pos)) for pos in trajectory_positions]
+    profile_fig = go.Figure()
+    profile_fig.add_trace(
+        go.Scatter(
+            x=list(range(len(residuals))),
+            y=residuals,
+            mode="lines+markers",
+            name="Residual distance (m)",
+        )
+    )
+    profile_fig.update_layout(
+        xaxis_title="Iteration",
+        yaxis_title="Residual to target (m)",
+        title="Residual decay during forward finite solving",
+        height=300,
+    )
+    st.plotly_chart(profile_fig, use_container_width=True)
+
+    st.subheader("Workspace envelope")
     cloud_samples = st.slider(
         "Number of workspace samples",
         min_value=200,
         max_value=4000,
         value=1200,
         step=200,
-        help="Random joint-state samples used to visualize the reachable workspace as a point cloud.",
+        help="Random joint-state samples used to visualize the reachable workspace as a point cloud before surfacing.",
     )
 
     if "workspace_cloud" not in st.session_state:
@@ -503,7 +541,30 @@ def main():
         st.session_state.workspace_cloud = sample_workspace_points(robot, samples=cloud_samples)
         cloud_points = st.session_state.workspace_cloud
     cloud_fig = go.Figure()
-    if len(cloud_points) > 0:
+
+    hull_added = False
+    if len(cloud_points) >= 4:
+        try:
+            hull = ConvexHull(cloud_points)
+            cloud_fig.add_trace(
+                go.Mesh3d(
+                    x=cloud_points[:, 0],
+                    y=cloud_points[:, 1],
+                    z=cloud_points[:, 2],
+                    i=hull.simplices[:, 0],
+                    j=hull.simplices[:, 1],
+                    k=hull.simplices[:, 2],
+                    color="#7f7f7f",
+                    opacity=0.4,
+                    name="Workspace envelope",
+                    flatshading=True,
+                )
+            )
+            hull_added = True
+        except QhullError:
+            st.warning("Workspace surface could not be generated (degenerate sample); showing markers instead.")
+
+    if not hull_added and len(cloud_points) > 0:
         cloud_fig.add_trace(
             go.Scatter3d(
                 x=cloud_points[:, 0],
@@ -569,7 +630,7 @@ def main():
         ),
         height=500,
         legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
-        title="Reachable workspace samples",
+        title="Reachable workspace envelope",
         uirevision="workspace-view",
     )
 
@@ -580,6 +641,8 @@ def main():
         "desired_dof": desired_dof,
         "redundant_dof": robot.redundant_dof,
         "solver": solver,
+        "diagnostic_solver": diagnostic_solver,
+        "diagnostic_residual": diag_residual_value,
         "joints": summary_table,
         "torque_budget": torque_budget,
         "gravity": robot.gravity,

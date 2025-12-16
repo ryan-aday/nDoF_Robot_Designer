@@ -15,7 +15,7 @@ st.markdown(
     """
     Use the sidebar to navigate between pages:
     - **Robot Designer & Dynamics**: Build the robot, compute inertia/torque budgets, and visualize motion.
-    - **Screw Theory & Kinematics Tools**: Interactive calculators for twists, wrenches, and exponential coordinates.
+    - **Fundamental Formulas**: Interactive calculators for twists, wrenches, forward-kinematics snippets, and exponential coordinates.
     - **C Code Generator**: Turn your JSON report into scaffolded C to drive hardware start→target→start motion.
 
     Built with reference to [screw theory](https://en.wikipedia.org/wiki/Screw_theory),

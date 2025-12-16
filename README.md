@@ -1,29 +1,29 @@
 # n-DoF Robot Designer
 
-A Streamlit app for designing serial n-DoF robots, solving inverse kinematics with screw-theory inspired tools, and animating the resulting motion.
+A Streamlit app for designing serial n-DoF robots, solving kinematics with forward-kinematics-driven tools, and animating the resulting motion.
 
 ## Features
 - Build robots with user-defined DoF, automatically flagging redundancy beyond 6 DoF.
 - Choose revolute-only or mixed prismatic/revolute joint strategies to achieve the requested DoF with the minimum joint count.
 - Configure homogeneous or per-joint beam lengths, cross-sectional areas, masses, and motor torque/force budgets.
 - Compute inertia tensors from length and cross-sectional area (square cross-section assumption), torque estimates, and a basic torque budget including payloads and configurable gravity (default Earth 9.81 m/s²).
-- Interactive IK solvers (damped least squares, Newton-Raphson, gradient descent, a basic matrix-projection solver, a screw-inspired adaptive solver, and a forward-kinematics finite-difference solver) with convergence feedback, adjustable iteration budgets, monotonic step acceptance to prevent divergence, manipulability checks, and residual reporting.
+- Forward finite-difference solver (DH-inspired) is the authoritative default, with legacy IK solvers (damped least squares, Newton-Raphson, gradient descent, matrix projection, screw-adaptive) retained for diagnostics; convergence feedback, adjustable iteration budgets, monotonic step acceptance, manipulability checks, and residual reporting are surfaced.
 - Inspect the pure matrix transform from the current end-effector pose to the target (translation-only target frame) to verify the required motion before solving.
-- Configure homogeneous or per-joint motion limits (singular poses are allowed) and replay an evenly interpolated start→target 60 FPS motion (blue legs, purple end-effector, red target, green origin) from user-defined home poses relative to the robot origin (camera locked during playback).
-- Visualize the reachable workspace via a sampled point cloud to understand why targets may be unreachable under the current limits and axes.
-- Screw theory calculators for twists, exponential coordinates, and wrench inspection.
+- Configure homogeneous or per-joint motion limits (singular poses are allowed) and replay an evenly interpolated start→target 60 FPS motion (blue legs, purple end-effector, red target, green origin) from user-defined home poses relative to the robot origin (camera locked during playback) while inspecting an end-effector motion profile plot.
+- Visualize the reachable workspace via a sampled point cloud surfaced into an opaque convex envelope to understand why targets may be unreachable under the current limits and axes.
+- Screw theory and forward-kinematics formulas page for twists, exponential coordinates, DH snippets, and wrench inspection.
 - Downloadable JSON report capturing the solved kinematics and dynamics summary, plus a C code generator to drive start→target→start motion on hardware.
 
 ## Running the app
 ```bash
-pip install -r requirements.txt  # or ensure streamlit, numpy, and plotly are available
+pip install -r requirements.txt  # or ensure streamlit, numpy, plotly, and scipy are available
 streamlit run app.py
 ```
 
 ## Notes on kinematics and dynamics
 - Joint axes alternate across x, y, z to improve workspace coverage and expose redundancy visually.
 - Torque estimates use a simple gravity loading model across the serial chain; treat them as sizing guidance, not detailed FEA.
-- Inverse kinematics defaults to damped least squares but also exposes Newton-Raphson and gradient-descent variants; adjust link lengths or targets if convergence warnings appear.
+- Kinematics defaults to the forward finite-difference solver that leans on repeated DH-style transforms; legacy inverse-kinematics variants remain for diagnostics only.
 
 ## References
 - Wikipedia contributors. [Screw theory](https://en.wikipedia.org/wiki/Screw_theory).
