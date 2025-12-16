@@ -22,6 +22,16 @@ def render_robot_plot(
     fig = go.Figure()
     fig.add_trace(
         go.Scatter3d(
+            x=[0.0],
+            y=[0.0],
+            z=[0.0],
+            mode="markers",
+            marker=dict(size=6, color="#2ca02c"),
+            name="Origin",
+        )
+    )
+    fig.add_trace(
+        go.Scatter3d(
             x=positions[:, 0],
             y=positions[:, 1],
             z=positions[:, 2],
@@ -51,8 +61,21 @@ def render_robot_plot(
             name="Target",
         )
     )
+    all_points = np.vstack([positions, target.reshape(1, 3), np.zeros((1, 3))])
+    x_min, x_max = all_points[:, 0].min(), all_points[:, 0].max()
+    y_min, y_max = all_points[:, 1].min(), all_points[:, 1].max()
+    z_min, z_max = all_points[:, 2].min(), all_points[:, 2].max()
+    pad = 0.1 * max(x_max - x_min, y_max - y_min, z_max - z_min, 1e-3)
     fig.update_layout(
-        scene=dict(xaxis_title="X", yaxis_title="Y", zaxis_title="Z", aspectmode="data"),
+        scene=dict(
+            xaxis_title="X",
+            yaxis_title="Y",
+            zaxis_title="Z",
+            xaxis=dict(range=[x_min - pad, x_max + pad]),
+            yaxis=dict(range=[y_min - pad, y_max + pad]),
+            zaxis=dict(range=[z_min - pad, z_max + pad]),
+            aspectmode="cube",
+        ),
         height=600,
         legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
         title=f"Robot visualization{' — ' + str(redundant) + ' redundant DoF' if redundant else ''}",
@@ -295,6 +318,13 @@ def main():
             go.Frame(
                 data=[
                     go.Scatter3d(
+                        x=[0.0],
+                        y=[0.0],
+                        z=[0.0],
+                        mode="markers",
+                        marker=dict(size=6, color="#2ca02c"),
+                    ),
+                    go.Scatter3d(
                         x=frame_positions[:, 0],
                         y=frame_positions[:, 1],
                         z=frame_positions[:, 2],
@@ -333,7 +363,12 @@ def main():
                         "method": "animate",
                         "args": [
                             None,
-                            {"frame": {"duration": 16, "redraw": False}, "fromcurrent": True, "mode": "immediate"},
+                            {
+                                "frame": {"duration": 16, "redraw": True},
+                                "fromcurrent": True,
+                                "mode": "immediate",
+                                "transition": {"duration": 0},
+                            },
                         ],
                     }
                 ],
