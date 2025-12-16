@@ -6,6 +6,8 @@ A Streamlit app for designing serial n-DoF robots, solving kinematics with forwa
 - Build robots with user-defined DoF, automatically flagging redundancy beyond 6 DoF.
 - Choose revolute-only or mixed prismatic/revolute joint strategies to achieve the requested DoF with the minimum joint count.
 - Configure homogeneous or per-joint beam lengths, cross-sectional areas, masses, and motor torque/force budgets.
+- Tune homogeneous or per-joint joint body offsets, masses, and inertia tensors that shape the visualization and feed the torqu
+e budget.
 - Compute inertia tensors from length and cross-sectional area (square cross-section assumption), torque estimates, and a basic torque budget including payloads and configurable gravity (default Earth 9.81 m/s²).
 - Forward finite-difference solver (DH-inspired) is the authoritative default, with legacy IK solvers (damped least squares, Newton-Raphson, gradient descent, matrix projection, screw-adaptive) retained for diagnostics; convergence feedback, adjustable iteration budgets, monotonic step acceptance, manipulability checks, and residual reporting are surfaced.
 - Inspect the pure matrix transform from the current end-effector pose to the target (translation-only target frame) to verify the required motion before solving.

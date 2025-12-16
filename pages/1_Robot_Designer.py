@@ -53,9 +53,9 @@ def build_frame_data(
                 axis_norm = np.linalg.norm(axis_world) + 1e-9
             axis_world = axis_world / axis_norm
 
-            cyl_length = max(0.02, min(link.length, link.length * 0.5))
-            start_offset = prev + axis_world * (cyl_length / 2)
-            end_offset = prev - axis_world * (cyl_length / 2)
+            cyl_length = max(0.02, robot.joints[idx - 1].body_length)
+            start_offset = prev - axis_world * (cyl_length / 2)
+            end_offset = prev + axis_world * (cyl_length / 2)
 
             legs_x.extend([prev[0], start_offset[0], None, end_offset[0], curr[0], None])
             legs_y.extend([prev[1], start_offset[1], None, end_offset[1], curr[1], None])
@@ -212,6 +212,18 @@ def main():
         help="Used to compute inertia assuming a square cross section; can vary per joint.",
     )
     default_mass = st.sidebar.number_input("Default link mass (kg)", 0.1, 20.0, 1.5, 0.1)
+    default_joint_offset = st.sidebar.number_input(
+        "Default joint body length (m)", min_value=0.0, max_value=0.5, value=0.1, step=0.01,
+        help="Controls the green joint body length used for offsets and torque/inertia aggregation.",
+    )
+    default_joint_mass = st.sidebar.number_input(
+        "Default joint mass (kg)", min_value=0.0, max_value=10.0, value=0.5, step=0.05,
+        help="Mass attributed to the joint body; included in torque/force budgets.",
+    )
+    default_joint_inertia = st.sidebar.number_input(
+        "Default joint inertia (kg·m²)", min_value=0.0, max_value=5.0, value=0.02, step=0.01,
+        help="Diagonal inertia term applied about the joint body's principal axes.",
+    )
     gravity = st.sidebar.number_input(
         "Gravity (m/s²)", min_value=0.0, max_value=30.0, value=9.81, step=0.01, help="Set the gravitational acceleration used for torque estimates."
     )
@@ -306,6 +318,69 @@ def main():
     joint_mins = [row.get("Min (rad/m)") for row in edited]
     joint_maxes = [row.get("Max (rad/m)") for row in edited]
 
+    st.markdown("**Joint body offsets, mass, and inertia**")
+    joint_body_mode = st.radio(
+        "Joint body configuration",
+        ["Homogeneous", "Vary by joint"],
+        index=0,
+        help="Control the physical joint body length, mass, and inertia that feed the torque budget and visualization offsets.",
+    )
+
+    body_table_defaults = [
+        {
+            "Joint": i + 1,
+            "Offset length (m)": default_joint_offset,
+            "Joint mass (kg)": default_joint_mass,
+            "Joint inertia Ix (kg·m²)": default_joint_inertia,
+            "Joint inertia Iy (kg·m²)": default_joint_inertia,
+            "Joint inertia Iz (kg·m²)": default_joint_inertia,
+        }
+        for i in range(solved_dof)
+    ]
+
+    joint_body_lengths = [default_joint_offset] * solved_dof
+    joint_body_masses = [default_joint_mass] * solved_dof
+    joint_body_inertias = [(default_joint_inertia, default_joint_inertia, default_joint_inertia)] * solved_dof
+
+    joint_body_column_config = {
+        "Offset length (m)": st.column_config.NumberColumn(min_value=0.0, step=0.01),
+        "Joint mass (kg)": st.column_config.NumberColumn(min_value=0.0, step=0.05),
+        "Joint inertia Ix (kg·m²)": st.column_config.NumberColumn(min_value=0.0, step=0.01),
+        "Joint inertia Iy (kg·m²)": st.column_config.NumberColumn(min_value=0.0, step=0.01),
+        "Joint inertia Iz (kg·m²)": st.column_config.NumberColumn(min_value=0.0, step=0.01),
+    }
+
+    if joint_body_mode == "Vary by joint":
+        joint_body_rows = st.data_editor(
+            body_table_defaults,
+            num_rows="fixed",
+            hide_index=True,
+            use_container_width=True,
+            column_config=joint_body_column_config,
+            key="joint_body_editor",
+        )
+
+        joint_body_lengths = [row.get("Offset length (m)", default_joint_offset) for row in joint_body_rows]
+        joint_body_masses = [row.get("Joint mass (kg)", default_joint_mass) for row in joint_body_rows]
+        joint_body_inertias = [
+            (
+                row.get("Joint inertia Ix (kg·m²)", default_joint_inertia),
+                row.get("Joint inertia Iy (kg·m²)", default_joint_inertia),
+                row.get("Joint inertia Iz (kg·m²)", default_joint_inertia),
+            )
+            for row in joint_body_rows
+        ]
+    else:
+        st.data_editor(
+            body_table_defaults,
+            num_rows="fixed",
+            hide_index=True,
+            use_container_width=True,
+            column_config=joint_body_column_config,
+            key="joint_body_editor_locked",
+            disabled=True,
+        )
+
     axis_lookup = {"X": np.array([1.0, 0.0, 0.0]), "Y": np.array([0.0, 1.0, 0.0]), "Z": np.array([0.0, 0.0, 1.0])}
     joint_axis_vectors = [axis_lookup.get(axis_key, np.array([1.0, 0.0, 0.0])) for axis_key in joint_axes]
 
@@ -349,6 +424,9 @@ def main():
         joint_notes=joint_notes,
         joint_mins=joint_mins,
         joint_maxes=joint_maxes,
+        joint_body_lengths=joint_body_lengths,
+        joint_body_masses=joint_body_masses,
+        joint_body_inertias=joint_body_inertias,
         gravity=gravity,
     )
 
@@ -777,6 +855,9 @@ def main():
         "animation_frames": animation_frames,
         "animation_path": [state.tolist() for state in path_states],
         "end_effector_path": path_end_positions.tolist(),
+        "joint_body_lengths": joint_body_lengths,
+        "joint_body_masses": joint_body_masses,
+        "joint_body_inertias": [list(inertia) for inertia in joint_body_inertias],
     }
     st.download_button("Download JSON report", data=json.dumps(report, indent=2), file_name="robot_report.json")
 

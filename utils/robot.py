@@ -51,6 +51,9 @@ class Joint:
     max_force: float = 0.0
     min_state: float = -math.pi
     max_state: float = math.pi
+    body_length: float = 0.05
+    body_mass: float = 0.2
+    body_inertia: Tuple[float, float, float] = (0.0, 0.0, 0.0)
 
 
 @dataclass
@@ -88,11 +91,22 @@ class RobotModel:
         cumulative_mass = payload_mass
         cumulative_length = 0.0
         for joint, link in reversed(list(zip(self.joints, self.links))):
-            cumulative_mass += link.mass
-            cumulative_length += link.length
-            torque = cumulative_mass * self.gravity * (cumulative_length)
+            cumulative_mass += link.mass + joint.body_mass
+            cumulative_length += link.length + max(joint.body_length, 0.0)
+
+            torque_from_weight = cumulative_mass * self.gravity * cumulative_length
+
+            axis = joint.axis / (np.linalg.norm(joint.axis) + 1e-9)
+            inertia_tensor = np.diag(joint.body_inertia)
+            projected_inertia = float(axis @ inertia_tensor @ axis)
+            inertia_torque = projected_inertia  # assuming 1 rad/s² nominal acceleration
+
+            torque = torque_from_weight + inertia_torque
             torques.append(torque)
-            joint.max_torque = torque
+            if joint.joint_type == "revolute":
+                joint.max_torque = torque
+            else:
+                joint.max_force = torque_from_weight / max(link.length, 1e-6)
         torques.reverse()
         return torques
 
@@ -133,6 +147,9 @@ def build_robot(
     joint_mins: Sequence[float] | None = None,
     joint_maxes: Sequence[float] | None = None,
     joint_axes: Sequence[Sequence[float]] | None = None,
+    joint_body_lengths: Sequence[float] | None = None,
+    joint_body_masses: Sequence[float] | None = None,
+    joint_body_inertias: Sequence[Sequence[float]] | None = None,
     gravity: float = 9.81,
 ) -> RobotModel:
     """Construct a RobotModel from user-edited link and joint tables.
@@ -163,6 +180,12 @@ def build_robot(
         joint_mins = [None] * solved_dof
     if joint_maxes is None:
         joint_maxes = [None] * solved_dof
+    if joint_body_lengths is None:
+        joint_body_lengths = [0.05] * solved_dof
+    if joint_body_masses is None:
+        joint_body_masses = [0.2] * solved_dof
+    if joint_body_inertias is None:
+        joint_body_inertias = [(0.0, 0.0, 0.0)] * solved_dof
 
     joints: List[Joint] = []
     links: List[Link] = []
@@ -184,6 +207,9 @@ def build_robot(
                 note=joint_notes[i],
                 min_state=joint_mins[i] if joint_mins[i] is not None else default_min,
                 max_state=joint_maxes[i] if joint_maxes[i] is not None else default_max,
+                body_length=joint_body_lengths[i],
+                body_mass=joint_body_masses[i],
+                body_inertia=tuple(joint_body_inertias[i]),
             )
         )
         links.append(
@@ -522,6 +548,9 @@ def joint_summary(robot: RobotModel) -> List[dict]:
                 "Joint": idx,
                 "Type": joint.joint_type,
                 "Axis": joint.axis.tolist(),
+                "Joint body length (m)": joint.body_length,
+                "Joint body mass (kg)": joint.body_mass,
+                "Joint body inertia (Ix, Iy, Iz)": joint.body_inertia,
                 "Length (m)": link.length,
                 "Cross-sectional area (m²)": link.cross_section_area,
                 "Mass (kg)": link.mass,
