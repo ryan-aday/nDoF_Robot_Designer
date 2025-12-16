@@ -215,19 +215,49 @@ def _accept_step(
     current_error_norm: float,
     scales: Tuple[float, ...] = (1.0, 0.5, 0.25, 0.1, 0.05),
 ) -> Tuple[np.ndarray, float, List[np.ndarray], bool]:
-    """Try scaled updates that monotonically reduce end-effector error."""
+    """Try scaled updates that prefer error reduction but still step forward.
+
+    Previously, we stopped iterating if no scaled update strictly improved the
+    residual, which could freeze motion when the solver hit flat Jacobian
+    regions. This routine now picks the best candidate even if it does not
+    strictly reduce the error so that the robot continues to move toward the
+    target in the animation, while still flagging whether a genuine reduction
+    occurred.
+    """
 
     mins = np.array([j.min_state for j in robot.joints])
     maxs = np.array([j.max_state for j in robot.joints])
+
+    best_state = states
+    best_err = current_error_norm
+    best_transforms = transforms
+    improved = False
 
     for scale in scales:
         candidate = np.clip(states + scale * delta, mins, maxs)
         cand_transforms = robot.homogenous_transforms(candidate)
         cand_error_norm = np.linalg.norm(target - cand_transforms[-1][:3, 3])
-        if cand_error_norm < current_error_norm - 1e-9:
-            return candidate, cand_error_norm, cand_transforms, True
 
-    return states, current_error_norm, transforms, False
+        if cand_error_norm < best_err - 1e-9:
+            best_state = candidate
+            best_err = cand_error_norm
+            best_transforms = cand_transforms
+            improved = True
+        elif best_transforms is transforms:
+            # Keep the first feasible candidate as a fallback if nothing improves
+            best_state = candidate
+            best_err = cand_error_norm
+            best_transforms = cand_transforms
+
+    # If every candidate kept the same error, still move along the smallest step
+    # to avoid freezing the trajectory shown in the animation.
+    if not improved and best_transforms is transforms:
+        fallback = np.clip(states + scales[-1] * delta, mins, maxs)
+        best_state = fallback
+        best_transforms = robot.homogenous_transforms(fallback)
+        best_err = np.linalg.norm(target - best_transforms[-1][:3, 3])
+
+    return best_state, best_err, best_transforms, improved
 
 
 def damped_least_squares_ik(
@@ -259,8 +289,6 @@ def damped_least_squares_ik(
         trajectory.append(states.copy())
         if current_error_norm < tol:
             return states, True, trajectory
-        if not improved:
-            break
     return states, False, trajectory
 
 
@@ -291,8 +319,6 @@ def newton_raphson_ik(
         trajectory.append(states.copy())
         if current_error_norm < tol:
             return states, True, trajectory
-        if not improved:
-            break
     return states, False, trajectory
 
 
@@ -324,8 +350,6 @@ def gradient_descent_ik(
         trajectory.append(states.copy())
         if current_error_norm < tol:
             return states, True, trajectory
-        if not improved:
-            break
     return states, False, trajectory
 
 
@@ -385,8 +409,6 @@ def screw_enhanced_ik(
         trajectory.append(states.copy())
         if current_error_norm < tol:
             return states, True, trajectory
-        if not improved:
-            break
 
     return states, False, trajectory
 
