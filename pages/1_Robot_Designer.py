@@ -258,13 +258,13 @@ def main():
             {
                 "type": "buttons",
                 "showactive": True,
+                "bgcolor": "#d2b48c",
+                "font": {"color": "#000", "size": 12},
                 "buttons": [
                     {
                         "label": "Play 60 FPS loop",
                         "method": "animate",
                         "args": [None, {"frame": {"duration": 16, "redraw": True}, "fromcurrent": True, "mode": "immediate"}],
-                        "bgcolor": "#d2b48c",
-                        "font": {"color": "#000", "size": 12},
                     }
                 ],
             }
