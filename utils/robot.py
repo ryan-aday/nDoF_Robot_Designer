@@ -100,6 +100,27 @@ class RobotModel:
 AXES = [np.array([1.0, 0.0, 0.0]), np.array([0.0, 1.0, 0.0]), np.array([0.0, 0.0, 1.0])]
 
 
+def _numerical_jacobian(robot: RobotModel, states: np.ndarray, eps: float = 1e-4) -> np.ndarray:
+    """Finite-difference positional Jacobian via forward kinematics.
+
+    This derivative-free Jacobian avoids the cross-product analytic form and relies only
+    on homogeneous transforms (akin to DH-based forward kinematics, e.g., Addison 2021),
+    helping the solver behave near singular configurations or axis edge cases.
+    """
+
+    base_tf = robot.homogenous_transforms(states)[-1]
+    base_pos = base_tf[:3, 3]
+    J_cols = []
+    for idx, (joint, state) in enumerate(zip(robot.joints, states)):
+        step = eps if joint.joint_type == "revolute" else max(eps, 0.25 * eps + 1e-6)
+        bumped = states.copy()
+        bumped[idx] = np.clip(state + step, joint.min_state, joint.max_state)
+        bumped_tf = robot.homogenous_transforms(bumped)[-1]
+        bumped_pos = bumped_tf[:3, 3]
+        J_cols.append((bumped_pos - base_pos) / step)
+    return np.array(J_cols).T  # 3 x n
+
+
 def build_robot(
     dof: int,
     allow_prismatic: bool,
@@ -449,6 +470,49 @@ def screw_enhanced_ik(
     return states, False, trajectory
 
 
+def forward_finite_ik(
+    robot: RobotModel,
+    target: np.ndarray,
+    initial_states: Sequence[float],
+    max_iters: int = 400,
+    tol: float = 1e-3,
+) -> Tuple[np.ndarray, bool, List[np.ndarray]]:
+    """Inverse kinematics using only forward-kinematics evaluations.
+
+    A finite-difference Jacobian (via homogeneous transforms) feeds a damped least
+    squares update. Manipulability-based damping and a monotonic backtracking step help
+    avoid solver stalls near singularities while keeping residuals shrinking.
+    """
+
+    states = np.array(initial_states, dtype=float)
+    trajectory: List[np.ndarray] = [states.copy()]
+    transforms = robot.homogenous_transforms(states)
+    current = transforms[-1][:3, 3]
+    error = target - current
+    current_error_norm = np.linalg.norm(error)
+    if current_error_norm < tol:
+        return states, True, trajectory
+
+    for _ in range(max_iters):
+        J_pos = _numerical_jacobian(robot, states)
+        svd_vals = np.linalg.svd(J_pos, compute_uv=False)
+        manipulability = float(np.prod(svd_vals[svd_vals > 1e-6]) ** (1 / max(1, len(robot.joints))))
+        damping = 0.01 / (manipulability + 1e-6)
+        lhs = J_pos @ J_pos.T + (damping**2) * np.eye(3)
+        delta = J_pos.T @ np.linalg.solve(lhs, error)
+        states, current_error_norm, transforms, improved = _monotonic_step(
+            robot, states, delta, target, transforms, current_error_norm, scales=(1.0, 0.5, 0.25, 0.1, 0.05)
+        )
+        error = target - transforms[-1][:3, 3]
+        trajectory.append(states.copy())
+        if current_error_norm < tol:
+            return states, True, trajectory
+        if not improved:
+            break
+
+    return states, False, trajectory
+
+
 def joint_summary(robot: RobotModel) -> List[dict]:
     summary = []
     for idx, (joint, link) in enumerate(zip(robot.joints, robot.links), start=1):
@@ -523,6 +587,20 @@ def reachability_report(
 
     feasible = len(reasons) == 0
     return feasible, reasons
+
+
+def manipulability_index(robot: RobotModel, states: Sequence[float]) -> Tuple[float, float]:
+    """Return (geometric mean singular value, condition number) of the numerical Jacobian."""
+
+    J_pos = _numerical_jacobian(robot, np.array(states, dtype=float))
+    sv = np.linalg.svd(J_pos, compute_uv=False)
+    positive_sv = sv[sv > 1e-8]
+    if len(positive_sv) == 0:
+        geom_mean = 0.0
+    else:
+        geom_mean = float(np.prod(positive_sv) ** (1 / len(positive_sv)))
+    cond = float(np.max(sv) / max(np.min(sv), 1e-9))
+    return geom_mean, cond
 
 
 def transform_from_target_to_start(

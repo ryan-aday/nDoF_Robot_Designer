@@ -7,7 +7,7 @@ A Streamlit app for designing serial n-DoF robots, solving inverse kinematics wi
 - Choose revolute-only or mixed prismatic/revolute joint strategies to achieve the requested DoF with the minimum joint count.
 - Configure homogeneous or per-joint beam lengths, cross-sectional areas, masses, and motor torque/force budgets.
 - Compute inertia tensors from length and cross-sectional area (square cross-section assumption), torque estimates, and a basic torque budget including payloads and configurable gravity (default Earth 9.81 m/s²).
-- Interactive IK solvers (damped least squares, Newton-Raphson, gradient descent, a basic matrix-projection solver, and a screw-inspired adaptive solver) with convergence feedback, adjustable iteration budgets, monotonic step acceptance to prevent divergence, and residual reporting.
+- Interactive IK solvers (damped least squares, Newton-Raphson, gradient descent, a basic matrix-projection solver, a screw-inspired adaptive solver, and a forward-kinematics finite-difference solver) with convergence feedback, adjustable iteration budgets, monotonic step acceptance to prevent divergence, manipulability checks, and residual reporting.
 - Inspect the pure matrix transform from the current end-effector pose to the target (translation-only target frame) to verify the required motion before solving.
 - Configure homogeneous or per-joint motion limits (singular poses are allowed) and replay an evenly interpolated start→target 60 FPS motion (blue legs, purple end-effector, red target, green origin) from user-defined home poses relative to the robot origin (camera locked during playback).
 - Visualize the reachable workspace via a sampled point cloud to understand why targets may be unreachable under the current limits and axes.
@@ -33,3 +33,4 @@ streamlit run app.py
 - He et al. [Improved screw theory for manipulator motion](https://journals.sagepub.com/doi/10.5772/60834).
 - Fu et al. [Trajectory smoothing for manipulators](https://www.witpress.com/Secure/elibrary/papers/HPSM25/HPSM25011FU1.pdf).
 - Tabak & Moosavian. [Redundant manipulator optimization](https://www.sciencedirect.com/science/article/abs/pii/S0094114X05001424).
+- Addison. [Homogeneous transforms with Denavit–Hartenberg](https://automaticaddison.com/homogeneous-transformation-matrices-using-denavit-hartenberg/).

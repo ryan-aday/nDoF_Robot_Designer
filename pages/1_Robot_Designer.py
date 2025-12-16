@@ -9,10 +9,12 @@ import streamlit as st
 from utils.robot import (
     build_robot,
     damped_least_squares_ik,
+    forward_finite_ik,
     gradient_descent_ik,
     joint_summary,
     matrix_projection_ik,
     newton_raphson_ik,
+    manipulability_index,
     reachability_report,
     sample_workspace_points,
     screw_enhanced_ik,
@@ -95,7 +97,8 @@ def main():
         "[Gradient descent in robotics](https://www.meegle.com/en_us/topics/gradient-descent/gradient-descent-in-robotics) | "
         "[Screw-theory improvements](https://journals.sagepub.com/doi/10.5772/60834) | "
         "[Trajectory smoothing](https://www.witpress.com/Secure/elibrary/papers/HPSM25/HPSM25011FU1.pdf) | "
-        "[Manipulator optimization](https://www.sciencedirect.com/science/article/abs/pii/S0094114X05001424)"
+        "[Manipulator optimization](https://www.sciencedirect.com/science/article/abs/pii/S0094114X05001424) | "
+        "[Forward kinematics via DH](https://automaticaddison.com/homogeneous-transformation-matrices-using-denavit-hartenberg/)"
     )
     st.sidebar.header("Robot setup")
 
@@ -325,9 +328,10 @@ def main():
             "Gradient descent",
             "Screw-enhanced adaptive",
             "Matrix projection",
+            "Forward finite (DH-based)",
         ],
         index=0,
-        help="Choose between classic numerical IK or a screw-theory-inspired adaptive variant from recent literature.",
+        help="Choose between classic numerical IK, screw-theory-inspired adaptive updates, or a forward-kinematics finite-difference solver (DH-style).",
     )
 
     with st.form("target_form"):
@@ -356,6 +360,16 @@ def main():
         )
         st.write(delta_tf)
 
+    manip, cond = manipulability_index(robot, start_states)
+    if cond > 500:
+        st.warning(
+            f"Home-pose manipulability is low (geometric mean {manip:.4e}, condition number {cond:.1f}); solver damping will try to avoid singularities, but consider adjusting joint axes or start angles."
+        )
+    else:
+        st.info(
+            f"Home-pose manipulability metric: {manip:.4e} (condition number {cond:.1f})."
+        )
+
     # IK solve
     feasible, reachability_reasons = reachability_report(robot, target_point, start_states)
     if not feasible:
@@ -378,6 +392,10 @@ def main():
             )
         elif solver == "Matrix projection":
             ik_states, converged, trajectory = matrix_projection_ik(
+                robot, target_point, st.session_state.joint_states, max_iters=max_steps
+            )
+        elif solver == "Forward finite (DH-based)":
+            ik_states, converged, trajectory = forward_finite_ik(
                 robot, target_point, st.session_state.joint_states, max_iters=max_steps
             )
         else:

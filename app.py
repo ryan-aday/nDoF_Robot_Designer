@@ -24,7 +24,8 @@ st.markdown(
     notes on [gradient descent in robotics](https://www.meegle.com/en_us/topics/gradient-descent/gradient-descent-in-robotics),
     and screw-theory refinements such as [He et al.](https://journals.sagepub.com/doi/10.5772/60834),
     [trajectory smoothing for manipulators](https://www.witpress.com/Secure/elibrary/papers/HPSM25/HPSM25011FU1.pdf),
-    and [redundant manipulator optimization](https://www.sciencedirect.com/science/article/abs/pii/S0094114X05001424).
+    [redundant manipulator optimization](https://www.sciencedirect.com/science/article/abs/pii/S0094114X05001424),
+    and [DH-style forward kinematics](https://automaticaddison.com/homogeneous-transformation-matrices-using-denavit-hartenberg/).
     """
 )
 

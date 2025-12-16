@@ -87,7 +87,8 @@ def main():
         [Gradient descent in robotics](https://www.meegle.com/en_us/topics/gradient-descent/gradient-descent-in-robotics) |
         [Screw-theory improvements](https://journals.sagepub.com/doi/10.5772/60834) |
         [Trajectory smoothing](https://www.witpress.com/Secure/elibrary/papers/HPSM25/HPSM25011FU1.pdf) |
-        [Manipulator optimization](https://www.sciencedirect.com/science/article/abs/pii/S0094114X05001424).
+        [Manipulator optimization](https://www.sciencedirect.com/science/article/abs/pii/S0094114X05001424) |
+        [Forward kinematics via DH](https://automaticaddison.com/homogeneous-transformation-matrices-using-denavit-hartenberg/).
         """
     )
 
