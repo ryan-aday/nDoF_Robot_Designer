@@ -19,21 +19,6 @@ from utils.robot import (
 def build_frame_data(robot, positions, transforms, target):
     end_effector = positions[-1]
 
-    revolute_x: List[float] = []
-    revolute_y: List[float] = []
-    revolute_z: List[float] = []
-    for i, joint in enumerate(robot.joints):
-        if joint.joint_type != "revolute":
-            continue
-        origin = positions[i]
-        axis_world = transforms[i][:3, :3] @ joint.axis
-        axis_dir = axis_world / (np.linalg.norm(axis_world) + 1e-9)
-        cylinder_length = max(0.02, 0.35 * robot.links[i].length)
-        tip = origin + cylinder_length * axis_dir
-        revolute_x.extend([origin[0], tip[0], None])
-        revolute_y.extend([origin[1], tip[1], None])
-        revolute_z.extend([origin[2], tip[2], None])
-
     traces = [
         go.Scatter3d(
             x=[0.0],
@@ -51,14 +36,6 @@ def build_frame_data(robot, positions, transforms, target):
             marker=dict(size=5, color="#1f77b4"),
             line=dict(width=5, color="#1f77b4"),
             name="Robot legs",
-        ),
-        go.Scatter3d(
-            x=revolute_x,
-            y=revolute_y,
-            z=revolute_z,
-            mode="lines",
-            line=dict(width=6, color="#2ecc71"),
-            name="Revolute joints (cylinders)",
         ),
         go.Scatter3d(
             x=[end_effector[0]],
@@ -133,7 +110,7 @@ def main():
     )
     default_length = st.sidebar.number_input("Default link length (m)", 0.05, 2.0, 0.25, 0.05)
     default_area = st.sidebar.number_input(
-        "Default cross-sectional area (m²)", 1e-4, 0.2, 0.0025, 0.0001,
+        "Default cross-sectional area (m²)", 1e-4, 0.2, 0.125, 0.0001,
         help="Used to compute inertia assuming a square cross section; can vary per joint.",
     )
     default_mass = st.sidebar.number_input("Default link mass (kg)", 0.1, 20.0, 1.5, 0.1)
@@ -391,8 +368,9 @@ def main():
 
     # Animation evenly interpolates between the home pose and the solved pose (not solver iterations)
     home_state = np.array(start_states)
+    final_state = np.array(trajectory[-1]) if len(trajectory) else ik_states
     alphas = np.linspace(0.0, 1.0, num=animation_frames + 1)
-    path_states = [home_state + alpha * (ik_states - home_state) for alpha in alphas]
+    path_states = [home_state + alpha * (final_state - home_state) for alpha in alphas]
 
     frames: List[go.Frame] = []
     for i, state in enumerate(path_states):
@@ -401,6 +379,7 @@ def main():
         frames.append(go.Frame(data=build_frame_data(robot, frame_positions, frame_transforms, target_point), name=f"frame{i}"))
 
     fig.frames = frames
+    frame_names = [f.name for f in frames]
     fig.update_layout(
         updatemenus=[
             {
@@ -413,12 +392,12 @@ def main():
                         "label": "Play 60 FPS loop",
                         "method": "animate",
                         "args": [
-                            None,
+                            frame_names,
                             {
-                                "frame": {"duration": 16, "redraw": True},
+                                "frame": {"duration": 1000 / 60, "redraw": True},
                                 "fromcurrent": True,
                                 "mode": "immediate",
-                                "transition": {"duration": 0},
+                                "transition": {"duration": 0, "easing": "linear"},
                             },
                         ],
                     }
