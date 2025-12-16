@@ -11,6 +11,7 @@ st.markdown(
     "References: [Screw theory](https://en.wikipedia.org/wiki/Screw_theory) | "
     "[Robot Kinematics and Dynamics](https://u0011821.pages.gitlab.kuleuven.be/robotics/2009-HermanBruyninckx-robot-kinematics-and-dynamics.pdf) | "
     "[Numerical IK (Modern Robotics)](https://modernrobotics.northwestern.edu/nu-gm-book-resource/6-2-numerical-inverse-kinematics-part-1-of-2/) | "
+    "[Inverse kinematics overview](https://www.mathworks.com/discovery/inverse-kinematics.html) | "
     "[Gradient descent in robotics](https://www.meegle.com/en_us/topics/gradient-descent/gradient-descent-in-robotics) | "
     "[Screw-theory improvements](https://journals.sagepub.com/doi/10.5772/60834) | "
     "[Trajectory smoothing](https://www.witpress.com/Secure/elibrary/papers/HPSM25/HPSM25011FU1.pdf) | "
@@ -77,6 +78,6 @@ with st.expander("Wrench projection"):
 
 st.info(
     "Key references: screw theory (Wikipedia), Herman Bruyninckx's 'Robot Kinematics and Dynamics', "
-    "Modern Robotics numerical IK, gradient-descent applications to robotics, screw-theoretic refinements (He et al.), "
-    "trajectory smoothing, redundant manipulator optimization, and DH-style homogeneous transforms (Addison)."
+    "Modern Robotics numerical IK, MathWorks inverse-kinematics overview, gradient-descent applications to robotics, "
+    "screw-theoretic refinements (He et al.), trajectory smoothing, redundant manipulator optimization, and DH-style homogeneous transforms (Addison)."
 )

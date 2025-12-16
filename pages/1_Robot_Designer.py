@@ -1,6 +1,6 @@
 import json
 import math
-from typing import List
+from typing import List, Optional
 
 import numpy as np
 import plotly.graph_objects as go
@@ -23,7 +23,13 @@ from utils.robot import (
 )
 
 
-def build_frame_data(robot, positions, transforms, target):
+def build_frame_data(
+    robot,
+    positions,
+    transforms,
+    target,
+    path_points: Optional[np.ndarray] = None,
+):
     end_effector = positions[-1]
 
     traces = [
@@ -61,11 +67,29 @@ def build_frame_data(robot, positions, transforms, target):
             name="Target",
         ),
     ]
+    if path_points is not None and len(path_points) > 0:
+        traces.append(
+            go.Scatter3d(
+                x=path_points[:, 0],
+                y=path_points[:, 1],
+                z=path_points[:, 2],
+                mode="lines",
+                line=dict(color="#7eb6ff", width=4),
+                name="End-effector path",
+            )
+        )
     return traces
 
 
-def render_robot_plot(robot, positions: np.ndarray, transforms, target: np.ndarray, redundant: int) -> go.Figure:
-    fig = go.Figure(data=build_frame_data(robot, positions, transforms, target))
+def render_robot_plot(
+    robot,
+    positions: np.ndarray,
+    transforms,
+    target: np.ndarray,
+    redundant: int,
+    path_points: Optional[np.ndarray] = None,
+) -> go.Figure:
+    fig = go.Figure(data=build_frame_data(robot, positions, transforms, target, path_points))
     all_points = np.vstack([positions, target.reshape(1, 3), np.zeros((1, 3))])
     x_min, x_max = all_points[:, 0].min(), all_points[:, 0].max()
     y_min, y_max = all_points[:, 1].min(), all_points[:, 1].max()
@@ -95,6 +119,7 @@ def main():
         "References: [Screw theory](https://en.wikipedia.org/wiki/Screw_theory) | "
         "[Robot Kinematics and Dynamics](https://u0011821.pages.gitlab.kuleuven.be/robotics/2009-HermanBruyninckx-robot-kinematics-and-dynamics.pdf) | "
         "[Numerical IK (Modern Robotics)](https://modernrobotics.northwestern.edu/nu-gm-book-resource/6-2-numerical-inverse-kinematics-part-1-of-2/) | "
+        "[Inverse kinematics overview](https://www.mathworks.com/discovery/inverse-kinematics.html) | "
         "[Gradient descent in robotics](https://www.meegle.com/en_us/topics/gradient-descent/gradient-descent-in-robotics) | "
         "[Screw-theory improvements](https://journals.sagepub.com/doi/10.5772/60834) | "
         "[Trajectory smoothing](https://www.witpress.com/Secure/elibrary/papers/HPSM25/HPSM25011FU1.pdf) | "
@@ -443,13 +468,38 @@ def main():
     transforms = robot.homogenous_transforms(st.session_state.joint_states)
     positions = np.array([t[:3, 3] for t in transforms])
     end_effector = positions[-1]
-    fig = render_robot_plot(robot, positions, transforms, target_point, robot.redundant_dof)
-
     # Animation evenly interpolates between the home pose and the solved pose (not solver iterations)
     home_state = np.array(start_states)
     final_state = np.array(trajectory[-1]) if len(trajectory) else ik_states
     alphas = np.linspace(0.0, 1.0, num=animation_frames + 1)
     path_states = [home_state + alpha * (final_state - home_state) for alpha in alphas]
+    path_end_positions = np.array(
+        [robot.homogenous_transforms(state)[-1][:3, 3] for state in path_states]
+    )
+
+    st.markdown("### Final joint states (rad/m and deg)")
+    st.caption(
+        "Solved joint configuration reported for traceability (see MathWorks inverse kinematics overview for why joint solutions matter)."
+    )
+    final_rows = []
+    for idx, (state, joint, axis_key) in enumerate(zip(final_state, robot.joints, joint_axes), start=1):
+        lower, upper = joint.min_state, joint.max_state
+        within = lower - 1e-9 <= state <= upper + 1e-9
+        final_rows.append(
+            {
+                "Joint": idx,
+                "Type": joint.joint_type,
+                "Axis": axis_key,
+                "State (rad/m)": round(float(state), 5),
+                "State (deg)": round(math.degrees(state), 3) if joint.joint_type == "revolute" else "—",
+                "Within limits": "Yes" if within else "No",
+            }
+        )
+    st.dataframe(final_rows, hide_index=True, use_container_width=True)
+
+    fig = render_robot_plot(
+        robot, positions, transforms, target_point, robot.redundant_dof, path_end_positions
+    )
 
     frames: List[go.Frame] = []
     for i, state in enumerate(path_states):
@@ -457,7 +507,9 @@ def main():
         frame_positions = np.array([t[:3, 3] for t in frame_transforms])
         frames.append(
             go.Frame(
-                data=build_frame_data(robot, frame_positions, frame_transforms, target_point),
+                data=build_frame_data(
+                    robot, frame_positions, frame_transforms, target_point, path_end_positions
+                ),
                 name=f"frame{i}",
             )
         )
@@ -653,10 +705,13 @@ def main():
         "home_state": home_state.tolist(),
         "start_states": start_states,
         "ik_solution": ik_states.tolist(),
+        "final_joint_states_rad": final_state.tolist(),
+        "final_joint_states_deg": [math.degrees(s) if jt == "revolute" else None for s, jt in zip(final_state, joint_types)],
         "solver_max_steps": max_steps,
         "solver_trajectory": [state.tolist() for state in trajectory],
         "animation_frames": animation_frames,
         "animation_path": [state.tolist() for state in path_states],
+        "end_effector_path": path_end_positions.tolist(),
     }
     st.download_button("Download JSON report", data=json.dumps(report, indent=2), file_name="robot_report.json")
 

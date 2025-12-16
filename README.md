@@ -10,6 +10,7 @@ A Streamlit app for designing serial n-DoF robots, solving kinematics with forwa
 - Forward finite-difference solver (DH-inspired) is the authoritative default, with legacy IK solvers (damped least squares, Newton-Raphson, gradient descent, matrix projection, screw-adaptive) retained for diagnostics; convergence feedback, adjustable iteration budgets, monotonic step acceptance, manipulability checks, and residual reporting are surfaced.
 - Inspect the pure matrix transform from the current end-effector pose to the target (translation-only target frame) to verify the required motion before solving.
 - Configure homogeneous or per-joint motion limits (singular poses are allowed) and replay an evenly interpolated start→target 60 FPS motion (blue legs, purple end-effector, red target, green origin) from user-defined home poses relative to the robot origin (camera locked during playback) while inspecting an end-effector motion profile plot.
+- Display the solved joint states (radians/meters and degrees for revolute joints) alongside the forward solution for traceability against inverse-kinematics references.
 - Visualize the reachable workspace via a sampled point cloud surfaced into an opaque convex envelope to understand why targets may be unreachable under the current limits and axes.
 - Screw theory and forward-kinematics formulas page for twists, exponential coordinates, DH snippets, and wrench inspection.
 - Downloadable JSON report capturing the solved kinematics and dynamics summary, plus a C code generator to drive start→target→start motion on hardware.
@@ -29,6 +30,7 @@ streamlit run app.py
 - Wikipedia contributors. [Screw theory](https://en.wikipedia.org/wiki/Screw_theory).
 - Herman Bruyninckx. [Robot Kinematics and Dynamics](https://u0011821.pages.gitlab.kuleuven.be/robotics/2009-HermanBruyninckx-robot-kinematics-and-dynamics.pdf).
 - Modern Robotics. [Numerical inverse kinematics](https://modernrobotics.northwestern.edu/nu-gm-book-resource/6-2-numerical-inverse-kinematics-part-1-of-2/).
+- MathWorks. [Inverse kinematics overview](https://www.mathworks.com/discovery/inverse-kinematics.html).
 - Meegle. [Gradient descent in robotics](https://www.meegle.com/en_us/topics/gradient-descent/gradient-descent-in-robotics).
 - He et al. [Improved screw theory for manipulator motion](https://journals.sagepub.com/doi/10.5772/60834).
 - Fu et al. [Trajectory smoothing for manipulators](https://www.witpress.com/Secure/elibrary/papers/HPSM25/HPSM25011FU1.pdf).
