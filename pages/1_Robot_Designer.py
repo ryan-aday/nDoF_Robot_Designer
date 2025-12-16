@@ -11,11 +11,9 @@ from utils.robot import (
     damped_least_squares_ik,
     gradient_descent_ik,
     joint_summary,
-    matrix_projection_ik,
     newton_raphson_ik,
     reachability_report,
     screw_enhanced_ik,
-    transform_from_target_to_start,
 )
 
 
@@ -168,7 +166,7 @@ def main():
         "Axis": st.column_config.SelectboxColumn(
             "Rotation/translation axis",
             options=axis_options,
-            help="Set the revolute rotation axis or prismatic translation axis per joint (XYZ basis).",
+            help="Set the LOCAL revolute rotation axis or prismatic translation axis per joint (XYZ basis).",
         ),
         "Length (m)": st.column_config.NumberColumn(min_value=0.01, step=0.01),
         "Cross-sectional area (m²)": st.column_config.NumberColumn(min_value=1e-4, step=1e-4),
@@ -283,6 +281,7 @@ def main():
         "Drag inside the plot to rotate the view. Define a 3D target relative to the robot origin, tune solver type/steps, and set motion ranges before playing the 60 FPS start→target motion (no stepwise jog buttons)."
     )
     st.caption("Use the start (rad/m) column to set a non-singular home pose; the animation interpolates from that pose to the target solution.")
+    st.info("Joint axes are interpreted in each joint's LOCAL frame. Collinear local axes limit reachable directions even when link lengths are sufficient.")
 
     if "joint_states" not in st.session_state or len(st.session_state.joint_states) != robot.dof:
         st.session_state.joint_states = start_states
@@ -323,7 +322,6 @@ def main():
             "Newton-Raphson",
             "Gradient descent",
             "Screw-enhanced adaptive",
-            "Matrix projection",
         ],
         index=0,
         help="Choose between classic numerical IK or a screw-theory-inspired adaptive variant from recent literature.",
@@ -348,13 +346,6 @@ def main():
             target_point = np.array([target_x, target_y, target_z])
     st.session_state.target_point = target_point
 
-    delta_tf = transform_from_target_to_start(robot, target_point, start_states)
-    with st.expander("Target-to-start transform (for transparency)"):
-        st.write(
-            "Relative transform from the current end-effector pose to the target (pure translation target frame):"
-        )
-        st.write(delta_tf)
-
     # IK solve
     feasible, reachability_reasons = reachability_report(robot, target_point, start_states)
     if not feasible:
@@ -374,10 +365,6 @@ def main():
         elif solver == "Gradient descent":
             ik_states, converged, trajectory = gradient_descent_ik(
                 robot, target_point, st.session_state.joint_states, step_size=0.05, max_iters=max_steps
-            )
-        elif solver == "Matrix projection":
-            ik_states, converged, trajectory = matrix_projection_ik(
-                robot, target_point, st.session_state.joint_states, max_iters=max_steps
             )
         else:
             ik_states, converged, trajectory = screw_enhanced_ik(

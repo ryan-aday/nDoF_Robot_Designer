@@ -7,9 +7,9 @@ A Streamlit app for designing serial n-DoF robots, solving inverse kinematics wi
 - Choose revolute-only or mixed prismatic/revolute joint strategies to achieve the requested DoF with the minimum joint count.
 - Configure homogeneous or per-joint beam lengths, cross-sectional areas, masses, and motor torque/force budgets.
 - Compute inertia tensors from length and cross-sectional area (square cross-section assumption), torque estimates, and a basic torque budget including payloads and configurable gravity (default Earth 9.81 m/s²).
-- Interactive IK solvers (damped least squares, Newton-Raphson, gradient descent, a basic matrix-projection solver, and a screw-inspired adaptive solver) with convergence feedback, adjustable iteration budgets, monotonic step acceptance to prevent divergence, and residual reporting.
-- Inspect the pure matrix transform from the current end-effector pose to the target (translation-only target frame) to verify the required motion before solving.
+- Interactive IK solvers (damped least squares, Newton-Raphson, gradient descent, and a screw-inspired adaptive solver) with convergence feedback, adjustable iteration budgets, monotonic step acceptance to prevent divergence, and residual reporting.
 - Configure homogeneous or per-joint motion limits to avoid singularities, then replay an evenly interpolated start→target 60 FPS motion (blue legs, purple end-effector, red target, green origin) from user-defined home poses relative to the robot origin (camera locked during playback).
+- Axes are interpreted locally per joint; an axis-aware reachability check reports when collinear axes (e.g., stacked Z joints) prevent a target even if link lengths are sufficient.
 - Screw theory calculators for twists, exponential coordinates, and wrench inspection.
 - Downloadable JSON report capturing the solved kinematics and dynamics summary, plus a C code generator to drive start→target→start motion on hardware.
 
@@ -20,7 +20,7 @@ streamlit run app.py
 ```
 
 ## Notes on kinematics and dynamics
-- Joint axes alternate across x, y, z to improve workspace coverage and expose redundancy visually.
+- Joint axes alternate across x, y, z by default to improve workspace coverage, but user-selected LOCAL axes are honored with reachability warnings if they constrain motion.
 - Torque estimates use a simple gravity loading model across the serial chain; treat them as sizing guidance, not detailed FEA.
 - Inverse kinematics defaults to damped least squares but also exposes Newton-Raphson and gradient-descent variants; adjust link lengths or targets if convergence warnings appear.
 
