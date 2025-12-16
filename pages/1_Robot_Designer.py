@@ -56,10 +56,10 @@ def build_frame_data(
             cyl_length = max(0.02, robot.joints[idx - 1].body_length)
             body_tip = prev + axis_world * cyl_length
 
-            # Keep legs connected at the joint midpoint and suppress the opposite extension
-            legs_x.extend([prev[0], curr[0], None])
-            legs_y.extend([prev[1], curr[1], None])
-            legs_z.extend([prev[2], curr[2], None])
+            # Anchor legs only at the endpoints of the revolute body (green line)
+            legs_x.extend([body_tip[0], curr[0], None])
+            legs_y.extend([body_tip[1], curr[1], None])
+            legs_z.extend([body_tip[2], curr[2], None])
 
             revolute_x.extend([prev[0], body_tip[0], None])
             revolute_y.extend([prev[1], body_tip[1], None])
