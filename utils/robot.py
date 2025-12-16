@@ -187,6 +187,17 @@ def build_robot(
     if joint_body_inertias is None:
         joint_body_inertias = [(0.0, 0.0, 0.0)] * solved_dof
 
+    def _safe_scalar(value: float | int | None, fallback: float) -> float:
+        if value is None:
+            return fallback
+        try:
+            val = float(value)
+        except (TypeError, ValueError):
+            return fallback
+        if not math.isfinite(val):
+            return fallback
+        return val
+
     joints: List[Joint] = []
     links: List[Link] = []
 
@@ -200,6 +211,12 @@ def build_robot(
         axis = axis / np.linalg.norm(axis)
         default_min = -math.pi if joint_types[i] == "revolute" else -link_lengths[i]
         default_max = math.pi if joint_types[i] == "revolute" else link_lengths[i]
+        body_length = abs(_safe_scalar(joint_body_lengths[i], 0.05))
+        body_mass = _safe_scalar(joint_body_masses[i], 0.2)
+        inertia_tuple = tuple(
+            _safe_scalar(component, 0.0) for component in joint_body_inertias[i]
+        )
+
         joints.append(
             Joint(
                 joint_type=joint_types[i],
@@ -207,9 +224,9 @@ def build_robot(
                 note=joint_notes[i],
                 min_state=joint_mins[i] if joint_mins[i] is not None else default_min,
                 max_state=joint_maxes[i] if joint_maxes[i] is not None else default_max,
-                body_length=joint_body_lengths[i],
-                body_mass=joint_body_masses[i],
-                body_inertia=tuple(joint_body_inertias[i]),
+                body_length=body_length,
+                body_mass=body_mass,
+                body_inertia=inertia_tuple,
             )
         )
         links.append(

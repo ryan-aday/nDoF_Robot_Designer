@@ -3,6 +3,7 @@ import math
 from typing import List, Optional
 
 import numpy as np
+import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 from scipy.spatial import ConvexHull, QhullError
@@ -53,7 +54,7 @@ def build_frame_data(
                 axis_norm = np.linalg.norm(axis_world) + 1e-9
             axis_world = axis_world / axis_norm
 
-            cyl_length = max(0.02, robot.joints[idx - 1].body_length)
+            cyl_length = robot.joints[idx - 1].body_length
             body_tip = prev + axis_world * cyl_length
 
             # Anchor legs only at the endpoints of the revolute body (green line)
@@ -634,11 +635,13 @@ def main():
                 "Type": joint.joint_type,
                 "Axis": axis_key,
                 "State (rad/m)": round(float(state), 5),
-                "State (deg)": round(math.degrees(state), 3) if joint.joint_type == "revolute" else "—",
+                # Keep degree values numeric (NaN for non-revolute) to avoid Arrow coercion warnings
+                "State (deg)": round(math.degrees(state), 3) if joint.joint_type == "revolute" else float("nan"),
                 "Within limits": "Yes" if within else "No",
             }
         )
-    st.dataframe(final_rows, hide_index=True, use_container_width=True)
+    final_df = pd.DataFrame(final_rows)
+    st.dataframe(final_df, hide_index=True, use_container_width=True)
 
     fig = render_robot_plot(
         robot, positions, transforms, target_point, robot.redundant_dof, path_end_positions
