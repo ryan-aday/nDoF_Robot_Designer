@@ -190,19 +190,25 @@ def render_robot_plot(
     path_points: Optional[np.ndarray] = None,
 ) -> go.Figure:
     fig = go.Figure(data=build_frame_data(robot, positions, transforms, target, path_points))
-    all_points = np.vstack([positions, target.reshape(1, 3), np.zeros((1, 3))])
+    bounds_sources = [positions, target.reshape(1, 3), np.zeros((1, 3))]
+    if path_points is not None and len(path_points) > 0:
+        bounds_sources.append(path_points)
+    all_points = np.vstack(bounds_sources)
     x_min, x_max = all_points[:, 0].min(), all_points[:, 0].max()
     y_min, y_max = all_points[:, 1].min(), all_points[:, 1].max()
     z_min, z_max = all_points[:, 2].min(), all_points[:, 2].max()
-    pad = 0.1 * max(x_max - x_min, y_max - y_min, z_max - z_min, 1e-3)
+    cube_span = max(x_max - x_min, y_max - y_min, z_max - z_min, 1.0)
+    margin = max(0.3 * cube_span, 0.5)
+    x_center, y_center, z_center = (x_min + x_max) / 2, (y_min + y_max) / 2, (z_min + z_max) / 2
+    half = cube_span / 2 + margin
     fig.update_layout(
         scene=dict(
             xaxis_title="X",
             yaxis_title="Y",
             zaxis_title="Z",
-            xaxis=dict(range=[x_min - pad, x_max + pad]),
-            yaxis=dict(range=[y_min - pad, y_max + pad]),
-            zaxis=dict(range=[z_min - pad, z_max + pad]),
+            xaxis=dict(range=[x_center - half, x_center + half]),
+            yaxis=dict(range=[y_center - half, y_center + half]),
+            zaxis=dict(range=[z_center - half, z_center + half]),
             aspectmode="cube",
         ),
         height=600,
@@ -241,7 +247,7 @@ def main():
         index=0,
         help="Choose whether all joints share the same motion range or each joint can be tuned individually.",
     )
-    default_length = st.sidebar.number_input("Default link length (m)", 0.05, 2.0, 0.25, 0.05)
+    default_length = st.sidebar.number_input("Default link length (m)", 0.05, 2.0, 0.5, 0.05)
     default_area = st.sidebar.number_input(
         "Default cross-sectional area (m²)", 1e-4, 0.2, 0.125, 0.0001,
         help="Used to compute inertia assuming a square cross section; can vary per joint.",
