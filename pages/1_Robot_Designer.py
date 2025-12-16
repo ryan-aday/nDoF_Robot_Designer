@@ -32,6 +32,43 @@ def build_frame_data(
 ):
     end_effector = positions[-1]
 
+    legs_x: List[float] = []
+    legs_y: List[float] = []
+    legs_z: List[float] = []
+    revolute_x: List[float] = []
+    revolute_y: List[float] = []
+    revolute_z: List[float] = []
+
+    for idx in range(1, len(positions)):
+        prev = positions[idx - 1]
+        curr = positions[idx]
+        joint = robot.joints[idx - 1]
+        link = robot.links[idx - 1]
+
+        if joint.joint_type == "revolute":
+            axis_world = transforms[idx - 1][:3, :3] @ joint.axis
+            axis_norm = np.linalg.norm(axis_world)
+            if axis_norm < 1e-9:
+                axis_world = joint.axis
+                axis_norm = np.linalg.norm(axis_world) + 1e-9
+            axis_world = axis_world / axis_norm
+
+            cyl_length = max(0.02, min(link.length, link.length * 0.5))
+            start_offset = prev + axis_world * (cyl_length / 2)
+            end_offset = prev - axis_world * (cyl_length / 2)
+
+            legs_x.extend([prev[0], start_offset[0], None, end_offset[0], curr[0], None])
+            legs_y.extend([prev[1], start_offset[1], None, end_offset[1], curr[1], None])
+            legs_z.extend([prev[2], start_offset[2], None, end_offset[2], curr[2], None])
+
+            revolute_x.extend([start_offset[0], end_offset[0], None])
+            revolute_y.extend([start_offset[1], end_offset[1], None])
+            revolute_z.extend([start_offset[2], end_offset[2], None])
+        else:
+            legs_x.extend([prev[0], curr[0], None])
+            legs_y.extend([prev[1], curr[1], None])
+            legs_z.extend([prev[2], curr[2], None])
+
     traces = [
         go.Scatter3d(
             x=[0.0],
@@ -42,31 +79,59 @@ def build_frame_data(
             name="Origin",
         ),
         go.Scatter3d(
-            x=positions[:, 0],
-            y=positions[:, 1],
-            z=positions[:, 2],
+            x=legs_x,
+            y=legs_y,
+            z=legs_z,
             mode="lines+markers",
             marker=dict(size=5, color="#1f77b4"),
             line=dict(width=5, color="#1f77b4"),
             name="Robot legs",
-        ),
-        go.Scatter3d(
-            x=[end_effector[0]],
-            y=[end_effector[1]],
-            z=[end_effector[2]],
-            mode="markers",
-            marker=dict(size=7, color="#6a0dad"),
-            name="End effector",
-        ),
-        go.Scatter3d(
-            x=[target[0]],
-            y=[target[1]],
-            z=[target[2]],
-            mode="markers",
-            marker=dict(size=6, color="#d62728"),
-            name="Target",
+            connectgaps=False,
         ),
     ]
+
+    if revolute_x:
+        traces.append(
+            go.Scatter3d(
+                x=revolute_x,
+                y=revolute_y,
+                z=revolute_z,
+                mode="lines",
+                line=dict(width=6, color="#2ca02c"),
+                name="Revolute joint body",
+                connectgaps=False,
+            )
+        )
+
+    traces.extend(
+        [
+            go.Scatter3d(
+                x=positions[:, 0],
+                y=positions[:, 1],
+                z=positions[:, 2],
+                mode="markers",
+                marker=dict(size=4, color="#1f77b4"),
+                name="Joint nodes",
+            ),
+            go.Scatter3d(
+                x=[end_effector[0]],
+                y=[end_effector[1]],
+                z=[end_effector[2]],
+                mode="markers",
+                marker=dict(size=7, color="#6a0dad"),
+                name="End effector",
+            ),
+            go.Scatter3d(
+                x=[target[0]],
+                y=[target[1]],
+                z=[target[2]],
+                mode="markers",
+                marker=dict(size=6, color="#d62728"),
+                name="Target",
+            ),
+        ]
+    )
+
     if path_points is not None and len(path_points) > 0:
         traces.append(
             go.Scatter3d(
