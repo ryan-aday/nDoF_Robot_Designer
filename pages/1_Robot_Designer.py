@@ -376,10 +376,14 @@ def main():
     for i, state in enumerate(path_states):
         frame_transforms = robot.homogenous_transforms(state)
         frame_positions = np.array([t[:3, 3] for t in frame_transforms])
-        frames.append(go.Frame(data=build_frame_data(robot, frame_positions, frame_transforms, target_point), name=f"frame{i}"))
+        frames.append(
+            go.Frame(
+                data=build_frame_data(robot, frame_positions, frame_transforms, target_point),
+                name=f"frame{i}",
+            )
+        )
 
-    fig.frames = frames
-    frame_names = [f.name for f in frames]
+    fig.update(frames=frames)
     fig.update_layout(
         updatemenus=[
             {
@@ -392,7 +396,7 @@ def main():
                         "label": "Play 60 FPS loop",
                         "method": "animate",
                         "args": [
-                            frame_names,
+                            None,
                             {
                                 "frame": {"duration": 1000 / 60, "redraw": True},
                                 "fromcurrent": True,
