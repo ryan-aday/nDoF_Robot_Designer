@@ -138,10 +138,13 @@ def main():
         direction = 1 if idx % 2 == 0 else -1
         return 0.2 * direction
 
+    axis_options = ["X", "Y", "Z"]
+
     editor_data = [
         {
             "Joint": i + 1,
             "Type": default_types[i] if i < len(default_types) else "revolute",
+            "Axis": axis_options[i % len(axis_options)],
             "Length (m)": default_length,
             "Cross-sectional area (m²)": default_area,
             "Mass (kg)": default_mass,
@@ -158,6 +161,11 @@ def main():
             "Joint type",
             options=["revolute", "prismatic"] if allow_prismatic else ["revolute"],
             help="Toggle joint actuation type; defaults favor the minimal efficient mix.",
+        ),
+        "Axis": st.column_config.SelectboxColumn(
+            "Rotation/translation axis",
+            options=axis_options,
+            help="Set the revolute rotation axis or prismatic translation axis per joint (XYZ basis).",
         ),
         "Length (m)": st.column_config.NumberColumn(min_value=0.01, step=0.01),
         "Cross-sectional area (m²)": st.column_config.NumberColumn(min_value=1e-4, step=1e-4),
@@ -194,10 +202,14 @@ def main():
     link_areas = [row["Cross-sectional area (m²)"] for row in edited]
     link_masses = [row["Mass (kg)"] for row in edited]
     joint_types = [row["Type"] for row in edited]
+    joint_axes = [row.get("Axis", "X") for row in edited]
     joint_notes = [row["Note"] for row in edited]
     start_states = [row.get("Start (rad/m)", 0.0) for row in edited]
     joint_mins = [row.get("Min (rad/m)") for row in edited]
     joint_maxes = [row.get("Max (rad/m)") for row in edited]
+
+    axis_lookup = {"X": np.array([1.0, 0.0, 0.0]), "Y": np.array([0.0, 1.0, 0.0]), "Z": np.array([0.0, 0.0, 1.0])}
+    joint_axis_vectors = [axis_lookup.get(axis_key, np.array([1.0, 0.0, 0.0])) for axis_key in joint_axes]
 
     invalid_starts: List[str] = []
     for idx, (jt, start, length, jmin, jmax) in enumerate(
@@ -235,6 +247,7 @@ def main():
         link_areas=link_areas,
         link_masses=link_masses,
         joint_types=joint_types,
+        joint_axes=joint_axis_vectors,
         joint_notes=joint_notes,
         joint_mins=joint_mins,
         joint_maxes=joint_maxes,

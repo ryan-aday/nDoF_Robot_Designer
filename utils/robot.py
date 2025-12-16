@@ -10,7 +10,11 @@ JointType = Literal["revolute", "prismatic"]
 
 
 def rotation_matrix(axis: np.ndarray, theta: float) -> np.ndarray:
-    axis = axis / np.linalg.norm(axis)
+    norm = np.linalg.norm(axis)
+    if norm < 1e-8:
+        axis = np.array([1.0, 0.0, 0.0])
+    else:
+        axis = axis / norm
     ux, uy, uz = axis
     c, s = math.cos(theta), math.sin(theta)
     return np.array(
@@ -107,6 +111,7 @@ def build_robot(
     joint_notes: Sequence[str] | None = None,
     joint_mins: Sequence[float] | None = None,
     joint_maxes: Sequence[float] | None = None,
+    joint_axes: Sequence[Sequence[float]] | None = None,
     gravity: float = 9.81,
 ) -> RobotModel:
     """Construct a RobotModel from user-edited link and joint tables.
@@ -142,7 +147,12 @@ def build_robot(
     links: List[Link] = []
 
     for i in range(solved_dof):
-        axis = AXES[i % len(AXES)]
+        if joint_axes is not None and i < len(joint_axes):
+            axis = np.array(joint_axes[i], dtype=float)
+        else:
+            axis = AXES[i % len(AXES)]
+        if np.linalg.norm(axis) < 1e-8:
+            axis = AXES[i % len(AXES)]
         default_min = -math.pi if joint_types[i] == "revolute" else -link_lengths[i]
         default_max = math.pi if joint_types[i] == "revolute" else link_lengths[i]
         joints.append(
@@ -182,13 +192,14 @@ def build_robot(
     return robot
 
 
-def _jacobian(robot: RobotModel, transforms: List[np.ndarray], target: np.ndarray) -> np.ndarray:
+def _jacobian(robot: RobotModel, transforms: List[np.ndarray]) -> np.ndarray:
+    end_effector = transforms[-1][:3, 3]
     J_cols = []
     for i, joint in enumerate(robot.joints):
         origin = transforms[i][:3, 3]
         z_axis = transforms[i][:3, :3] @ joint.axis
         if joint.joint_type == "revolute":
-            v = np.cross(z_axis, target - origin)
+            v = np.cross(z_axis, end_effector - origin)
             J_cols.append(np.concatenate([z_axis, v]))
         else:
             J_cols.append(np.concatenate([np.zeros(3), z_axis]))
@@ -237,7 +248,7 @@ def damped_least_squares_ik(
         return states, True, trajectory
 
     for _ in range(max_iters):
-        J = _jacobian(robot, transforms, target)
+        J = _jacobian(robot, transforms)
         J_pos = J[:3, :]
         damping_matrix = (damping**2) * np.eye(J_pos.shape[0])
         delta = J_pos.T @ np.linalg.inv(J_pos @ J_pos.T + damping_matrix) @ error
@@ -270,7 +281,7 @@ def newton_raphson_ik(
         return states, True, trajectory
 
     for _ in range(max_iters):
-        J = _jacobian(robot, transforms, target)
+        J = _jacobian(robot, transforms)
         J_pos = J[:3, :]
         delta = np.linalg.pinv(J_pos) @ error
         states, current_error_norm, transforms, improved = _accept_step(
@@ -303,7 +314,7 @@ def gradient_descent_ik(
         return states, True, trajectory
 
     for _ in range(max_iters):
-        J = _jacobian(robot, transforms, target)
+        J = _jacobian(robot, transforms)
         J_pos = J[:3, :]
         delta = step_size * (J_pos.T @ error)
         states, current_error_norm, transforms, improved = _accept_step(
@@ -348,7 +359,7 @@ def screw_enhanced_ik(
         return states, True, trajectory
 
     for _ in range(max_iters):
-        J = _jacobian(robot, transforms, target)
+        J = _jacobian(robot, transforms)
         J_pos = J[:3, :]
 
         col_norms = np.linalg.norm(J_pos, axis=0, keepdims=True) + 1e-8
