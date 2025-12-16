@@ -206,22 +206,21 @@ def _jacobian(robot: RobotModel, transforms: List[np.ndarray]) -> np.ndarray:
     return np.array(J_cols).T  # 6 x n
 
 
-def _accept_step(
+def _monotonic_step(
     robot: RobotModel,
     states: np.ndarray,
     delta: np.ndarray,
     target: np.ndarray,
     transforms: List[np.ndarray],
     current_error_norm: float,
-    scales: Tuple[float, ...] = (1.0, 0.5, 0.25, 0.1, 0.05, 0.01, 0.005, 0.001),
-) -> Tuple[np.ndarray, float, List[np.ndarray], bool, bool]:
-    """Try scaled updates and only accept steps that reduce the residual.
+    scales: Tuple[float, ...] = (1.0, 0.5, 0.25, 0.1, 0.05, 0.02, 0.01),
+) -> Tuple[np.ndarray, float, List[np.ndarray], bool]:
+    """Backtracking line search that only accepts error-reducing steps.
 
-    Returns the updated state, the new residual, the updated transforms, a flag
-    indicating whether the error decreased, and a flag indicating whether any
-    step was accepted. The extra flag lets callers stop if every scale fails to
-    improve the error, avoiding aimless motion when a configuration is blocked
-    by limits or singular structure.
+    Each solver proposes a delta; we then try progressively smaller scales until
+    the positional residual shrinks. If no scale improves the error, the solver
+    reports the stall so callers can explain why convergence failed instead of
+    wandering aimlessly.
     """
 
     mins = np.array([j.min_state for j in robot.joints])
@@ -231,22 +230,11 @@ def _accept_step(
         candidate = np.clip(states + scale * delta, mins, maxs)
         cand_transforms = robot.homogenous_transforms(candidate)
         cand_error_norm = np.linalg.norm(target - cand_transforms[-1][:3, 3])
-
         if cand_error_norm < current_error_norm - 1e-9:
-            return candidate, cand_error_norm, cand_transforms, True, True
+            return candidate, cand_error_norm, cand_transforms, True
 
-    return states, current_error_norm, transforms, False, False
-
-
-def reachable_distance(robot: RobotModel) -> float:
-    """Upper bound on straight-line reach based on link lengths and limits."""
-
-    reach = 0.0
-    for joint, link in zip(robot.joints, robot.links):
-        reach += link.length
-        if joint.joint_type == "prismatic":
-            reach += max(abs(joint.min_state), abs(joint.max_state))
-    return reach
+    # No improvement found
+    return states, current_error_norm, transforms, False
 
 
 def damped_least_squares_ik(
@@ -256,7 +244,7 @@ def damped_least_squares_ik(
     max_iters: int = 200,
     damping: float = 0.01,
     tol: float = 1e-3,
-) -> Tuple[np.ndarray, bool, List[np.ndarray], str]:
+) -> Tuple[np.ndarray, bool, List[np.ndarray]]:
     states = np.array(initial_states, dtype=float)
     trajectory: List[np.ndarray] = [states.copy()]
     transforms = robot.homogenous_transforms(states)
@@ -264,27 +252,23 @@ def damped_least_squares_ik(
     error = target - current
     current_error_norm = np.linalg.norm(error)
     if current_error_norm < tol:
-        return states, True, trajectory, ""
+        return states, True, trajectory
 
-    reason = ""
     for _ in range(max_iters):
         J = _jacobian(robot, transforms)
         J_pos = J[:3, :]
         damping_matrix = (damping**2) * np.eye(J_pos.shape[0])
         delta = J_pos.T @ np.linalg.inv(J_pos @ J_pos.T + damping_matrix) @ error
-        states, current_error_norm, transforms, improved, accepted = _accept_step(
+        states, current_error_norm, transforms, improved = _monotonic_step(
             robot, states, delta, target, transforms, current_error_norm
         )
         error = target - transforms[-1][:3, 3]
         trajectory.append(states.copy())
         if current_error_norm < tol:
-            return states, True, trajectory, ""
-        if not accepted:
-            reason = "All candidate steps violated limits or failed to reduce the residual (possible singularity or range block)."
+            return states, True, trajectory
+        if not improved:
             break
-    if not reason:
-        reason = "Max iterations reached before residual tolerance was met."
-    return states, False, trajectory, reason
+    return states, False, trajectory
 
 
 def newton_raphson_ik(
@@ -293,7 +277,7 @@ def newton_raphson_ik(
     initial_states: Sequence[float],
     max_iters: int = 200,
     tol: float = 1e-3,
-) -> Tuple[np.ndarray, bool, List[np.ndarray], str]:
+) -> Tuple[np.ndarray, bool, List[np.ndarray]]:
     states = np.array(initial_states, dtype=float)
     trajectory: List[np.ndarray] = [states.copy()]
     transforms = robot.homogenous_transforms(states)
@@ -301,26 +285,22 @@ def newton_raphson_ik(
     error = target - current
     current_error_norm = np.linalg.norm(error)
     if current_error_norm < tol:
-        return states, True, trajectory, ""
+        return states, True, trajectory
 
-    reason = ""
     for _ in range(max_iters):
         J = _jacobian(robot, transforms)
         J_pos = J[:3, :]
         delta = np.linalg.pinv(J_pos) @ error
-        states, current_error_norm, transforms, improved, accepted = _accept_step(
+        states, current_error_norm, transforms, improved = _monotonic_step(
             robot, states, delta, target, transforms, current_error_norm
         )
         error = target - transforms[-1][:3, 3]
         trajectory.append(states.copy())
         if current_error_norm < tol:
-            return states, True, trajectory, ""
-        if not accepted:
-            reason = "All candidate steps violated limits or failed to reduce the residual (possible singularity or range block)."
+            return states, True, trajectory
+        if not improved:
             break
-    if not reason:
-        reason = "Max iterations reached before residual tolerance was met."
-    return states, False, trajectory, reason
+    return states, False, trajectory
 
 
 def gradient_descent_ik(
@@ -330,7 +310,7 @@ def gradient_descent_ik(
     step_size: float = 0.05,
     max_iters: int = 400,
     tol: float = 1e-3,
-) -> Tuple[np.ndarray, bool, List[np.ndarray], str]:
+) -> Tuple[np.ndarray, bool, List[np.ndarray]]:
     states = np.array(initial_states, dtype=float)
     trajectory: List[np.ndarray] = [states.copy()]
     transforms = robot.homogenous_transforms(states)
@@ -338,26 +318,22 @@ def gradient_descent_ik(
     error = target - current
     current_error_norm = np.linalg.norm(error)
     if current_error_norm < tol:
-        return states, True, trajectory, ""
+        return states, True, trajectory
 
-    reason = ""
     for _ in range(max_iters):
         J = _jacobian(robot, transforms)
         J_pos = J[:3, :]
         delta = step_size * (J_pos.T @ error)
-        states, current_error_norm, transforms, improved, accepted = _accept_step(
+        states, current_error_norm, transforms, improved = _monotonic_step(
             robot, states, delta, target, transforms, current_error_norm
         )
         error = target - transforms[-1][:3, 3]
         trajectory.append(states.copy())
         if current_error_norm < tol:
-            return states, True, trajectory, ""
-        if not accepted:
-            reason = "All candidate steps violated limits or failed to reduce the residual (possible singularity or range block)."
+            return states, True, trajectory
+        if not improved:
             break
-    if not reason:
-        reason = "Max iterations reached before residual tolerance was met."
-    return states, False, trajectory, reason
+    return states, False, trajectory
 
 
 def screw_enhanced_ik(
@@ -369,7 +345,7 @@ def screw_enhanced_ik(
     momentum: float = 0.1,
     max_iters: int = 400,
     tol: float = 1e-3,
-) -> Tuple[np.ndarray, bool, List[np.ndarray], str]:
+) -> Tuple[np.ndarray, bool, List[np.ndarray]]:
     """IK variant inspired by screw-theory refinements with adaptive damping.
 
     The method normalizes Jacobian columns (screw axes), adapts damping based on
@@ -387,9 +363,8 @@ def screw_enhanced_ik(
     error = target - current
     current_error_norm = np.linalg.norm(error)
     if current_error_norm < tol:
-        return states, True, trajectory, ""
+        return states, True, trajectory
 
-    reason = ""
     for _ in range(max_iters):
         J = _jacobian(robot, transforms)
         J_pos = J[:3, :]
@@ -409,21 +384,18 @@ def screw_enhanced_ik(
         delta = step_size * (weighted_J.T @ np.linalg.solve(lhs, error))
         delta += momentum * prev_delta
 
-        states, current_error_norm, transforms, improved, accepted = _accept_step(
+        states, current_error_norm, transforms, improved = _monotonic_step(
             robot, states, delta, target, transforms, current_error_norm
         )
         error = target - transforms[-1][:3, 3]
         prev_delta = delta
         trajectory.append(states.copy())
         if current_error_norm < tol:
-            return states, True, trajectory, ""
-        if not accepted:
-            reason = "All candidate steps violated limits or failed to reduce the residual (possible singularity or range block)."
+            return states, True, trajectory
+        if not improved:
             break
 
-    if not reason:
-        reason = "Max iterations reached before residual tolerance was met."
-    return states, False, trajectory, reason
+    return states, False, trajectory
 
 
 def joint_summary(robot: RobotModel) -> List[dict]:
@@ -445,6 +417,36 @@ def joint_summary(robot: RobotModel) -> List[dict]:
             }
         )
     return summary
+
+
+def reachability_report(robot: RobotModel, target: np.ndarray) -> Tuple[bool, List[str]]:
+    """Coarse reachability analysis to explain impossible targets.
+
+    The check assumes a serial chain and uses generous upper bounds based on link
+    lengths and prismatic ranges. It is intentionally conservative so that any
+    "unreachable" verdict is backed by a clear geometric reason rather than
+    solver heuristics.
+    """
+
+    reasons: List[str] = []
+    link_lengths = np.array([link.length for link in robot.links])
+    prismatic_spans = np.array(
+        [
+            max(abs(j.min_state), abs(j.max_state)) if j.joint_type == "prismatic" else 0.0
+            for j in robot.joints
+        ]
+    )
+
+    max_reach = float(link_lengths.sum() + prismatic_spans.sum())
+    distance = float(np.linalg.norm(target))
+
+    if distance > max_reach + 1e-6:
+        reasons.append(
+            f"Target is {distance:.3f} m from the origin, exceeding the generous reach bound of {max_reach:.3f} m."
+        )
+
+    feasible = len(reasons) == 0
+    return feasible, reasons
 
 
 def spherical_adjust(target: np.ndarray, delta_radius: float) -> np.ndarray:
