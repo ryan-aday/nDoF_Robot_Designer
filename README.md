@@ -7,10 +7,10 @@ A Streamlit app for designing serial n-DoF robots, solving inverse kinematics wi
 - Choose revolute-only or mixed prismatic/revolute joint strategies to achieve the requested DoF with the minimum joint count.
 - Configure homogeneous or per-joint beam dimensions/masses and motor torque/force budgets.
 - Compute rectangular-prism inertia tensors, torque estimates, and a basic torque budget including payloads.
-- Interactive IK solver (damped least squares) with convergence feedback and residual reporting.
-- Plotly 3D viewer with drag-to-rotate, Cartesian/spherical jogging buttons, and looping animation between home and target states.
+- Interactive IK solvers (damped least squares, Newton-Raphson, gradient descent) with convergence feedback and residual reporting.
+- Plotly 3D viewer with drag-to-rotate and looping animation between home and target states defined relative to the robot origin.
 - Screw theory calculators for twists, exponential coordinates, and wrench inspection.
-- Downloadable JSON report capturing the solved kinematics and dynamics summary.
+- Downloadable JSON report capturing the solved kinematics and dynamics summary, plus a C code generator to drive start→target→start motion on hardware.
 
 ## Running the app
 ```bash
@@ -21,8 +21,13 @@ streamlit run app.py
 ## Notes on kinematics and dynamics
 - Joint axes alternate across x, y, z to improve workspace coverage and expose redundancy visually.
 - Torque estimates use a simple gravity loading model across the serial chain; treat them as sizing guidance, not detailed FEA.
-- Inverse kinematics uses damped least squares with a positional Jacobian; adjust link lengths or targets if convergence warnings appear.
+- Inverse kinematics defaults to damped least squares but also exposes Newton-Raphson and gradient-descent variants; adjust link lengths or targets if convergence warnings appear.
 
 ## References
 - Wikipedia contributors. [Screw theory](https://en.wikipedia.org/wiki/Screw_theory).
 - Herman Bruyninckx. [Robot Kinematics and Dynamics](https://u0011821.pages.gitlab.kuleuven.be/robotics/2009-HermanBruyninckx-robot-kinematics-and-dynamics.pdf).
+- Modern Robotics. [Numerical inverse kinematics](https://modernrobotics.northwestern.edu/nu-gm-book-resource/6-2-numerical-inverse-kinematics-part-1-of-2/).
+- Meegle. [Gradient descent in robotics](https://www.meegle.com/en_us/topics/gradient-descent/gradient-descent-in-robotics).
+- He et al. [Improved screw theory for manipulator motion](https://journals.sagepub.com/doi/10.5772/60834).
+- Fu et al. [Trajectory smoothing for manipulators](https://www.witpress.com/Secure/elibrary/papers/HPSM25/HPSM25011FU1.pdf).
+- Tabak & Moosavian. [Redundant manipulator optimization](https://www.sciencedirect.com/science/article/abs/pii/S0094114X05001424).

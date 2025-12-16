@@ -8,6 +8,15 @@ st.title("Screw Theory & Kinematics Tools")
 st.write(
     "Utilities to reason about twists, wrenches, and exponential coordinates based on screw theory."
 )
+st.markdown(
+    "References: [Screw theory](https://en.wikipedia.org/wiki/Screw_theory) | "
+    "[Robot Kinematics and Dynamics](https://u0011821.pages.gitlab.kuleuven.be/robotics/2009-HermanBruyninckx-robot-kinematics-and-dynamics.pdf) | "
+    "[Numerical IK (Modern Robotics)](https://modernrobotics.northwestern.edu/nu-gm-book-resource/6-2-numerical-inverse-kinematics-part-1-of-2/) | "
+    "[Gradient descent in robotics](https://www.meegle.com/en_us/topics/gradient-descent/gradient-descent-in-robotics) | "
+    "[Screw-theory improvements](https://journals.sagepub.com/doi/10.5772/60834) | "
+    "[Trajectory smoothing](https://www.witpress.com/Secure/elibrary/papers/HPSM25/HPSM25011FU1.pdf) | "
+    "[Manipulator optimization](https://www.sciencedirect.com/science/article/abs/pii/S0094114X05001424)"
+)
 
 st.markdown(
     """
@@ -54,5 +63,5 @@ with st.expander("Wrench projection"):
         st.error(f"Invalid wrench: {e}")
 
 st.info(
-    "Key references: Wikipedia on screw theory and Herman Bruyninckx's 'Robot Kinematics and Dynamics'."
+    "Key references: Wikipedia on screw theory, Herman Bruyninckx's 'Robot Kinematics and Dynamics', Modern Robotics on numerical IK, gradient-descent applications to robotics, and recent screw-theoretic refinements (He et al., trajectory smoothing, redundant manipulator optimization)."
 )

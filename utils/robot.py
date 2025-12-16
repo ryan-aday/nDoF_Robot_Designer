@@ -40,6 +40,7 @@ class Link:
 class Joint:
     joint_type: JointType
     axis: np.ndarray
+    note: str = ""
     max_torque: float = 0.0
     max_force: float = 0.0
 
@@ -99,23 +100,41 @@ def build_robot(
     link_widths: Sequence[float],
     link_depths: Sequence[float],
     link_masses: Sequence[float],
+    joint_types: Sequence[JointType] | None = None,
+    joint_notes: Sequence[str] | None = None,
 ) -> RobotModel:
+    """Construct a RobotModel from user-edited link and joint tables.
+
+    The minimum DoF is inferred from the provided link sizing and joint types to
+    avoid mismatches that can destabilize downstream Jacobian operations.
+    """
+
     redundant = max(0, dof - 6)
-    solved_dof = max(1, min(dof, len(link_lengths)))
-    revolute_count = solved_dof - prismatic_count if allow_prismatic else solved_dof
-    prismatic_count = prismatic_count if allow_prismatic else 0
+    solved_dof = min(
+        max(1, dof),
+        len(link_lengths),
+        len(link_widths),
+        len(link_depths),
+        len(link_masses),
+        len(joint_types) if joint_types is not None else dof,
+    )
+
+    # Default to an efficient mix if the user did not supply explicit joint types
+    # (prioritise revolute joints unless prismatic_count is requested).
+    if joint_types is None:
+        revolute_count = solved_dof - prismatic_count if allow_prismatic else solved_dof
+        prismatic_count = prismatic_count if allow_prismatic else 0
+        joint_types = ["prismatic" if allow_prismatic and i < prismatic_count else "revolute" for i in range(solved_dof)]
+
+    if joint_notes is None:
+        joint_notes = [""] * solved_dof
 
     joints: List[Joint] = []
     links: List[Link] = []
 
     for i in range(solved_dof):
         axis = AXES[i % len(AXES)]
-        j_type: JointType
-        if allow_prismatic and i < prismatic_count:
-            j_type = "prismatic"
-        else:
-            j_type = "revolute"
-        joints.append(Joint(joint_type=j_type, axis=axis))
+        joints.append(Joint(joint_type=joint_types[i], axis=axis, note=joint_notes[i]))
         links.append(
             Link(
                 length=link_lengths[i],
@@ -130,10 +149,25 @@ def build_robot(
         notes.append(f"Robot has {redundant} redundant DoF beyond 6.")
     if not allow_prismatic:
         notes.append("Joint solution restricted to revolute joints only.")
+    user_notes = [note for note in joint_notes if note]
+    notes.extend(user_notes)
 
     robot = RobotModel(dof=solved_dof, links=links, joints=joints, redundant_dof=redundant, notes=notes)
     robot.torque_budget()
     return robot
+
+
+def _jacobian(robot: RobotModel, transforms: List[np.ndarray], target: np.ndarray) -> np.ndarray:
+    J_cols = []
+    for i, joint in enumerate(robot.joints):
+        origin = transforms[i][:3, 3]
+        z_axis = transforms[i][:3, :3] @ joint.axis
+        if joint.joint_type == "revolute":
+            v = np.cross(z_axis, target - origin)
+            J_cols.append(np.concatenate([z_axis, v]))
+        else:
+            J_cols.append(np.concatenate([np.zeros(3), z_axis]))
+    return np.array(J_cols).T  # 6 x n
 
 
 def damped_least_squares_ik(
@@ -152,22 +186,108 @@ def damped_least_squares_ik(
         if np.linalg.norm(error) < tol:
             return states, True
 
-        # Build Jacobian using screw axes
-        J = []
-        for i, joint in enumerate(robot.joints):
-            origin = transforms[i][:3, 3]
-            z_axis = transforms[i][:3, :3] @ joint.axis
-            if joint.joint_type == "revolute":
-                v = np.cross(z_axis, target - origin)
-                J.append(np.concatenate([z_axis, v]))
-            else:
-                J.append(np.concatenate([np.zeros(3), z_axis]))
-        J = np.array(J).T  # 6 x n
-
-        JT = J[:3, :].T  # position rows only
-        damping_matrix = damping * np.eye(JT.shape[1])
-        delta = JT.T @ np.linalg.inv(JT @ JT.T + damping_matrix) @ error
+        J = _jacobian(robot, transforms, target)
+        J_pos = J[:3, :]
+        damping_matrix = (damping**2) * np.eye(J_pos.shape[0])
+        delta = J_pos.T @ np.linalg.inv(J_pos @ J_pos.T + damping_matrix) @ error
         states += delta
+    return states, False
+
+
+def newton_raphson_ik(
+    robot: RobotModel,
+    target: np.ndarray,
+    initial_states: Sequence[float],
+    max_iters: int = 200,
+    tol: float = 1e-3,
+) -> Tuple[np.ndarray, bool]:
+    states = np.array(initial_states, dtype=float)
+    for _ in range(max_iters):
+        transforms = robot.homogenous_transforms(states)
+        current = transforms[-1][:3, 3]
+        error = target - current
+        if np.linalg.norm(error) < tol:
+            return states, True
+
+        J = _jacobian(robot, transforms, target)
+        J_pos = J[:3, :]
+        delta = np.linalg.pinv(J_pos) @ error
+        states += delta
+    return states, False
+
+
+def gradient_descent_ik(
+    robot: RobotModel,
+    target: np.ndarray,
+    initial_states: Sequence[float],
+    step_size: float = 0.05,
+    max_iters: int = 400,
+    tol: float = 1e-3,
+) -> Tuple[np.ndarray, bool]:
+    states = np.array(initial_states, dtype=float)
+    for _ in range(max_iters):
+        transforms = robot.homogenous_transforms(states)
+        current = transforms[-1][:3, 3]
+        error = target - current
+        if np.linalg.norm(error) < tol:
+            return states, True
+
+        J = _jacobian(robot, transforms, target)
+        J_pos = J[:3, :]
+        delta = step_size * (J_pos.T @ error)
+        states += delta
+    return states, False
+
+
+def screw_enhanced_ik(
+    robot: RobotModel,
+    target: np.ndarray,
+    initial_states: Sequence[float],
+    step_size: float = 0.07,
+    damping_base: float = 0.01,
+    momentum: float = 0.1,
+    max_iters: int = 400,
+    tol: float = 1e-3,
+) -> Tuple[np.ndarray, bool]:
+    """IK variant inspired by screw-theory refinements with adaptive damping.
+
+    The method normalizes Jacobian columns (screw axes), adapts damping based on
+    a manipulability estimate, and blends in a small momentum term to avoid
+    stalls near shallow gradients (see e.g., He et al. 2015 on screw-theoretic
+    improvements and related trajectory smoothing papers).
+    """
+
+    states = np.array(initial_states, dtype=float)
+    prev_delta = np.zeros_like(states)
+
+    for _ in range(max_iters):
+        transforms = robot.homogenous_transforms(states)
+        current = transforms[-1][:3, 3]
+        error = target - current
+        if np.linalg.norm(error) < tol:
+            return states, True
+
+        J = _jacobian(robot, transforms, target)
+        J_pos = J[:3, :]
+
+        col_norms = np.linalg.norm(J_pos, axis=0, keepdims=True) + 1e-8
+        weighted_J = J_pos / col_norms
+
+        singular_values = np.linalg.svd(weighted_J, compute_uv=False)
+        valid_s = singular_values[singular_values > 1e-6]
+        if len(valid_s) == 0:
+            manipulability = 0.0
+        else:
+            manipulability = float(np.prod(valid_s) ** (1 / len(valid_s)))
+
+        adaptive_damping = damping_base / (manipulability + 1e-6)
+        lhs = weighted_J @ weighted_J.T + adaptive_damping * np.eye(3)
+        delta = step_size * (weighted_J.T @ np.linalg.solve(lhs, error))
+        delta += momentum * prev_delta
+
+        states += delta
+        prev_delta = delta
+
     return states, False
 
 
@@ -184,6 +304,7 @@ def joint_summary(robot: RobotModel) -> List[dict]:
                 "Mass (kg)": link.mass,
                 "Inertia (Ix, Iy, Iz)": (ix, iy, iz),
                 "Torque/Force budget": joint.max_torque if joint.joint_type == "revolute" else joint.max_force,
+                "Note": joint.note,
             }
         )
     return summary

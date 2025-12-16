@@ -8,8 +8,10 @@ import streamlit as st
 from utils.robot import (
     build_robot,
     damped_least_squares_ik,
+    gradient_descent_ik,
     joint_summary,
-    spherical_adjust,
+    newton_raphson_ik,
+    screw_enhanced_ik,
 )
 
 
@@ -47,6 +49,15 @@ def render_robot_plot(positions: np.ndarray, target: np.ndarray, redundant: int)
 
 def main():
     st.title("Robot Designer & Dynamics")
+    st.markdown(
+        "References: [Screw theory](https://en.wikipedia.org/wiki/Screw_theory) | "
+        "[Robot Kinematics and Dynamics](https://u0011821.pages.gitlab.kuleuven.be/robotics/2009-HermanBruyninckx-robot-kinematics-and-dynamics.pdf) | "
+        "[Numerical IK (Modern Robotics)](https://modernrobotics.northwestern.edu/nu-gm-book-resource/6-2-numerical-inverse-kinematics-part-1-of-2/) | "
+        "[Gradient descent in robotics](https://www.meegle.com/en_us/topics/gradient-descent/gradient-descent-in-robotics) | "
+        "[Screw-theory improvements](https://journals.sagepub.com/doi/10.5772/60834) | "
+        "[Trajectory smoothing](https://www.witpress.com/Secure/elibrary/papers/HPSM25/HPSM25011FU1.pdf) | "
+        "[Manipulator optimization](https://www.sciencedirect.com/science/article/abs/pii/S0094114X05001424)"
+    )
     st.sidebar.header("Robot setup")
 
     desired_dof = st.sidebar.slider("Desired DoF", 1, 12, 6)
@@ -61,29 +72,59 @@ def main():
     default_depth = st.sidebar.number_input("Default link depth (m)", 0.01, 0.5, 0.05, 0.01)
     default_mass = st.sidebar.number_input("Default link mass (kg)", 0.1, 20.0, 1.5, 0.1)
 
-    solved_dof = max(1, desired_dof)
+    default_types = ["prismatic" if allow_prismatic and i < prismatic_count else "revolute" for i in range(desired_dof)]
+
+    editor_data = [
+        {
+            "Joint": i + 1,
+            "Type": default_types[i] if i < len(default_types) else "revolute",
+            "Length (m)": default_length,
+            "Width (m)": default_width,
+            "Depth (m)": default_depth,
+            "Mass (kg)": default_mass,
+            "Note": "",
+        }
+        for i in range(max(1, desired_dof))
+    ]
+
+    column_config = {
+        "Type": st.column_config.SelectboxColumn(
+            "Joint type",
+            options=["revolute", "prismatic"] if allow_prismatic else ["revolute"],
+            help="Toggle joint actuation type; defaults favor the minimal efficient mix.",
+        ),
+        "Length (m)": st.column_config.NumberColumn(min_value=0.01, step=0.01),
+        "Width (m)": st.column_config.NumberColumn(min_value=0.005, step=0.005),
+        "Depth (m)": st.column_config.NumberColumn(min_value=0.005, step=0.005),
+        "Mass (kg)": st.column_config.NumberColumn(min_value=0.01, step=0.05),
+        "Note": st.column_config.TextColumn(help="Add per-joint notes; they flow into the summary and report."),
+    }
+
+    edited = st.data_editor(
+        editor_data,
+        num_rows="dynamic",
+        use_container_width=True,
+        column_config=column_config,
+        key="links_editor",
+    )
+
+    if len(edited) == 0:
+        st.warning("Add at least one joint to continue.")
+        return
+
+    solved_dof = len(edited)
+    link_lengths = [row["Length (m)"] for row in edited]
+    link_widths = [row["Width (m)"] for row in edited]
+    link_depths = [row["Depth (m)"] for row in edited]
+    link_masses = [row["Mass (kg)"] for row in edited]
+    joint_types = [row["Type"] for row in edited]
+    joint_notes = [row["Note"] for row in edited]
 
     if homogeneous == "Homogeneous":
         link_lengths = [default_length] * solved_dof
         link_widths = [default_width] * solved_dof
         link_depths = [default_depth] * solved_dof
         link_masses = [default_mass] * solved_dof
-    else:
-        editor_data = [
-            {
-                "Link": i + 1,
-                "Length (m)": default_length,
-                "Width (m)": default_width,
-                "Depth (m)": default_depth,
-                "Mass (kg)": default_mass,
-            }
-            for i in range(solved_dof)
-        ]
-        edited = st.data_editor(editor_data, num_rows="dynamic", key="links_editor")
-        link_lengths = [row["Length (m)"] for row in edited]
-        link_widths = [row["Width (m)"] for row in edited]
-        link_depths = [row["Depth (m)"] for row in edited]
-        link_masses = [row["Mass (kg)"] for row in edited]
 
     robot = build_robot(
         dof=solved_dof,
@@ -93,6 +134,8 @@ def main():
         link_widths=link_widths,
         link_depths=link_depths,
         link_masses=link_masses,
+        joint_types=joint_types,
+        joint_notes=joint_notes,
     )
 
     st.subheader("Joint solution")
@@ -117,7 +160,7 @@ def main():
     st.divider()
     st.subheader("Dynamics-aware visualization")
     st.write(
-        "Drag inside the plot to rotate the view. Use the Cartesian arrow buttons to jog the target. Spherical buttons adjust the radius."
+        "Drag inside the plot to rotate the view. Define a 3D target relative to the robot origin, then play the 60 FPS start→target motion (no stepwise jog buttons)."
     )
 
     if "joint_states" not in st.session_state or len(st.session_state.joint_states) != robot.dof:
@@ -125,38 +168,58 @@ def main():
 
     target_point = st.session_state.get("target_point", np.array([sum(link_lengths), 0.0, 0.0]))
 
-    # Jog controls
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        if st.button("← X-0.05 m"):
-            target_point = target_point + np.array([-0.05, 0, 0])
-        if st.button("→ X+0.05 m"):
-            target_point = target_point + np.array([0.05, 0, 0])
-    with col2:
-        if st.button("↓ Y-0.05 m"):
-            target_point = target_point + np.array([0, -0.05, 0])
-        if st.button("↑ Y+0.05 m"):
-            target_point = target_point + np.array([0, 0.05, 0])
-    with col3:
-        if st.button("↧ Z-0.05 m"):
-            target_point = target_point + np.array([0, 0, -0.05])
-        if st.button("↥ Z+0.05 m"):
-            target_point = target_point + np.array([0, 0, 0.05])
+    solver = st.selectbox(
+        "Inverse-kinematics solver",
+        [
+            "Damped least squares",
+            "Newton-Raphson",
+            "Gradient descent",
+            "Screw-enhanced adaptive",
+        ],
+        index=0,
+        help="Choose between classic numerical IK or a screw-theory-inspired adaptive variant from recent literature.",
+    )
 
-    col4, col5 = st.columns(2)
-    with col4:
-        if st.button("Spherical: contract 0.05 m"):
-            target_point = spherical_adjust(target_point, -0.05)
-    with col5:
-        if st.button("Spherical: expand 0.05 m"):
-            target_point = spherical_adjust(target_point, 0.05)
-
+    with st.form("target_form"):
+        col_tx, col_ty, col_tz = st.columns(3)
+        with col_tx:
+            target_x = st.number_input(
+                "Target X relative to origin (m)", value=float(target_point[0]), step=0.05
+            )
+        with col_ty:
+            target_y = st.number_input(
+                "Target Y relative to origin (m)", value=float(target_point[1]), step=0.05
+            )
+        with col_tz:
+            target_z = st.number_input(
+                "Target Z relative to origin (m)", value=float(target_point[2]), step=0.05
+            )
+        submitted = st.form_submit_button("Update target")
+        if submitted:
+            target_point = np.array([target_x, target_y, target_z])
     st.session_state.target_point = target_point
 
     # IK solve
-    ik_states, converged = damped_least_squares_ik(
-        robot, target_point, st.session_state.joint_states, damping=0.02, max_iters=400
-    )
+    if solver == "Damped least squares":
+        ik_states, converged = damped_least_squares_ik(
+            robot, target_point, st.session_state.joint_states, damping=0.02, max_iters=400
+        )
+    elif solver == "Newton-Raphson":
+        ik_states, converged = newton_raphson_ik(robot, target_point, st.session_state.joint_states, max_iters=300)
+    elif solver == "Gradient descent":
+        ik_states, converged = gradient_descent_ik(
+            robot, target_point, st.session_state.joint_states, step_size=0.05, max_iters=600
+        )
+    else:
+        ik_states, converged = screw_enhanced_ik(
+            robot,
+            target_point,
+            st.session_state.joint_states,
+            step_size=0.06,
+            damping_base=0.015,
+            momentum=0.12,
+            max_iters=500,
+        )
     st.session_state.joint_states = ik_states.tolist()
 
     if not converged:
@@ -170,7 +233,7 @@ def main():
     # Animation between home and target
     home_state = np.zeros(robot.dof)
     frames: List[go.Frame] = []
-    n_frames = 20
+    n_frames = 120
     for i in range(n_frames + 1):
         alpha = i / n_frames
         interp_state = (1 - alpha) * home_state + alpha * ik_states
@@ -197,25 +260,16 @@ def main():
                 "showactive": True,
                 "buttons": [
                     {
-                        "label": "Play loop",
+                        "label": "Play 60 FPS loop",
                         "method": "animate",
-                        "args": [None, {"frame": {"duration": 200, "redraw": True}, "fromcurrent": True, "mode": "immediate"}],
+                        "args": [None, {"frame": {"duration": 16, "redraw": True}, "fromcurrent": True, "mode": "immediate"}],
+                        "bgcolor": "#d2b48c",
+                        "font": {"color": "#000", "size": 12},
                     }
                 ],
             }
         ],
-        sliders=[
-            {
-                "steps": [
-                    {
-                        "label": str(i),
-                        "method": "animate",
-                        "args": [[f"frame{i}"]],
-                    }
-                    for i in range(n_frames + 1)
-                ]
-            }
-        ],
+        sliders=[],
     )
 
     st.plotly_chart(fig, use_container_width=True, config={"scrollZoom": True})
@@ -230,11 +284,14 @@ def main():
     report = {
         "desired_dof": desired_dof,
         "redundant_dof": robot.redundant_dof,
+        "solver": solver,
         "joints": summary_table,
         "torque_budget": torque_budget,
         "target": target_point.tolist(),
         "end_effector": end_effector.tolist(),
         "converged": converged,
+        "home_state": home_state.tolist(),
+        "ik_solution": ik_states.tolist(),
     }
     st.download_button("Download JSON report", data=json.dumps(report, indent=2), file_name="robot_report.json")
 
