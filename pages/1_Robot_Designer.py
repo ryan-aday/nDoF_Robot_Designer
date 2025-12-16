@@ -44,7 +44,6 @@ def build_frame_data(
         prev = positions[idx - 1]
         curr = positions[idx]
         joint = robot.joints[idx - 1]
-        link = robot.links[idx - 1]
 
         if joint.joint_type == "revolute":
             axis_world = transforms[idx - 1][:3, :3] @ joint.axis
@@ -54,8 +53,27 @@ def build_frame_data(
                 axis_norm = np.linalg.norm(axis_world) + 1e-9
             axis_world = axis_world / axis_norm
 
+            leg_vec = curr - prev
+            leg_norm = np.linalg.norm(leg_vec)
+            if leg_norm < 1e-9:
+                leg_dir = np.array([1.0, 0.0, 0.0])
+            else:
+                leg_dir = leg_vec / leg_norm
+
+            # Force the offset to be perpendicular to the leg direction
+            axis_proj = axis_world - np.dot(axis_world, leg_dir) * leg_dir
+            proj_norm = np.linalg.norm(axis_proj)
+            if proj_norm < 1e-9:
+                # Pick an arbitrary perpendicular direction to the leg
+                fallback = np.array([1.0, 0.0, 0.0])
+                if abs(np.dot(fallback, leg_dir)) > 0.9:
+                    fallback = np.array([0.0, 1.0, 0.0])
+                axis_proj = np.cross(leg_dir, fallback)
+                proj_norm = np.linalg.norm(axis_proj) + 1e-9
+            axis_proj = axis_proj / proj_norm
+
             cyl_length = robot.joints[idx - 1].body_length
-            body_tip = prev + axis_world * cyl_length
+            body_tip = prev + axis_proj * cyl_length
 
             # Anchor legs only at the endpoints of the revolute body (green line)
             legs_x.extend([body_tip[0], curr[0], None])
@@ -104,6 +122,10 @@ def build_frame_data(
             )
         )
 
+    start_marker = None
+    if path_points is not None and len(path_points) > 0:
+        start_marker = path_points[0]
+
     traces.extend(
         [
             go.Scatter3d(
@@ -132,6 +154,18 @@ def build_frame_data(
             ),
         ]
     )
+
+    if start_marker is not None:
+        traces.append(
+            go.Scatter3d(
+                x=[start_marker[0]],
+                y=[start_marker[1]],
+                z=[start_marker[2]],
+                mode="markers",
+                marker=dict(size=6, color="#17becf"),
+                name="Start effector",
+            )
+        )
 
     if path_points is not None and len(path_points) > 0:
         traces.append(
@@ -245,7 +279,7 @@ def main():
 
     def _default_start(idx: int, joint_type: str) -> float:
         if joint_type == "prismatic":
-            return 0.05
+            return 0.0
         direction = 1 if idx % 2 == 0 else -1
         return 0.2 * direction
 
@@ -319,6 +353,34 @@ def main():
     joint_mins = [row.get("Min (rad/m)") for row in edited]
     joint_maxes = [row.get("Max (rad/m)") for row in edited]
 
+    def _coerce_positive(values: List[float], fallback: float) -> List[float]:
+        clean: List[float] = []
+        for v in values:
+            try:
+                val = float(v)
+            except (TypeError, ValueError):
+                val = fallback
+            if not math.isfinite(val) or val <= 0:
+                val = fallback
+            clean.append(val)
+        return clean
+
+    def _coerce_nonnegative(values: List[float], fallback: float) -> List[float]:
+        clean: List[float] = []
+        for v in values:
+            try:
+                val = float(v)
+            except (TypeError, ValueError):
+                val = fallback
+            if not math.isfinite(val) or val < 0:
+                val = fallback
+            clean.append(val)
+        return clean
+
+    link_lengths = _coerce_positive(link_lengths, default_length)
+    link_areas = _coerce_positive(link_areas, default_area)
+    link_masses = _coerce_positive(link_masses, default_mass)
+
     st.markdown("**Joint body offsets, mass, and inertia**")
     joint_body_mode = st.radio(
         "Joint body configuration",
@@ -381,6 +443,12 @@ def main():
             key="joint_body_editor_locked",
             disabled=True,
         )
+
+    joint_body_lengths = _coerce_positive(joint_body_lengths, default_joint_offset)
+    joint_body_masses = _coerce_nonnegative(joint_body_masses, default_joint_mass)
+    joint_body_inertias = [
+        tuple(_coerce_nonnegative(list(inertia), default_joint_inertia)) for inertia in joint_body_inertias
+    ]
 
     axis_lookup = {"X": np.array([1.0, 0.0, 0.0]), "Y": np.array([0.0, 1.0, 0.0]), "Z": np.array([0.0, 0.0, 1.0])}
     joint_axis_vectors = [axis_lookup.get(axis_key, np.array([1.0, 0.0, 0.0])) for axis_key in joint_axes]
@@ -467,7 +535,7 @@ def main():
         st.session_state.joint_states = start_states
     st.session_state.synced_from_editor = False
 
-    target_point = st.session_state.get("target_point", np.array([sum(link_lengths), 0.0, 0.0]))
+    target_point = st.session_state.get("target_point", np.array([2.0, -1.0, 0.5]))
 
     max_reach = sum(link_lengths) + sum(abs(s) for jt, s in zip(joint_types, start_states) if jt == "prismatic")
     if np.linalg.norm(target_point) > max_reach + 1e-6:
