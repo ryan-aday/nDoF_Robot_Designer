@@ -104,12 +104,30 @@ def main():
     )
 
     homogeneous = st.sidebar.radio("Link sizing", ["Homogeneous", "Vary by joint"], index=0)
+    limit_mode = st.sidebar.radio(
+        "Joint range mode",
+        ["Homogeneous limits", "Vary limits by joint"],
+        index=0,
+        help="Choose whether all joints share the same motion range or each joint can be tuned individually.",
+    )
     default_length = st.sidebar.number_input("Default link length (m)", 0.05, 2.0, 0.25, 0.05)
     default_width = st.sidebar.number_input("Default link width (m)", 0.01, 0.5, 0.05, 0.01)
     default_depth = st.sidebar.number_input("Default link depth (m)", 0.01, 0.5, 0.05, 0.01)
     default_mass = st.sidebar.number_input("Default link mass (kg)", 0.1, 20.0, 1.5, 0.1)
     gravity = st.sidebar.number_input(
         "Gravity (m/s²)", min_value=0.0, max_value=30.0, value=9.81, step=0.01, help="Set the gravitational acceleration used for torque estimates."
+    )
+    default_revolute_min = st.sidebar.number_input(
+        "Homogeneous revolute min (rad)", value=-math.pi, step=0.1, format="%.2f"
+    )
+    default_revolute_max = st.sidebar.number_input(
+        "Homogeneous revolute max (rad)", value=math.pi, step=0.1, format="%.2f"
+    )
+    default_prismatic_min = st.sidebar.number_input(
+        "Homogeneous prismatic min (m)", value=-default_length, step=0.05
+    )
+    default_prismatic_max = st.sidebar.number_input(
+        "Homogeneous prismatic max (m)", value=default_length, step=0.05
     )
 
     default_types = ["prismatic" if allow_prismatic and i < prismatic_count else "revolute" for i in range(desired_dof)]
@@ -129,6 +147,8 @@ def main():
             "Depth (m)": default_depth,
             "Mass (kg)": default_mass,
             "Start (rad/m)": _default_start(i, default_types[i] if i < len(default_types) else "revolute"),
+            "Min (rad/m)": default_revolute_min if default_types[i] == "revolute" else -default_length,
+            "Max (rad/m)": default_revolute_max if default_types[i] == "revolute" else default_length,
             "Note": "",
         }
         for i in range(max(1, desired_dof))
@@ -146,6 +166,14 @@ def main():
         "Mass (kg)": st.column_config.NumberColumn(min_value=0.01, step=0.05),
         "Start (rad/m)": st.column_config.NumberColumn(
             help="Initial joint state (radians for revolute, meters for prismatic) to avoid singular home poses.",
+            step=0.01,
+        ),
+        "Min (rad/m)": st.column_config.NumberColumn(
+            help="Lower bound for the joint's motion (radians for revolute, meters for prismatic).",
+            step=0.01,
+        ),
+        "Max (rad/m)": st.column_config.NumberColumn(
+            help="Upper bound for the joint's motion (radians for revolute, meters for prismatic).",
             step=0.01,
         ),
         "Note": st.column_config.TextColumn(help="Add per-joint notes; they flow into the summary and report."),
@@ -171,11 +199,21 @@ def main():
     joint_types = [row["Type"] for row in edited]
     joint_notes = [row["Note"] for row in edited]
     start_states = [row.get("Start (rad/m)", 0.0) for row in edited]
+    joint_mins = [row.get("Min (rad/m)") for row in edited]
+    joint_maxes = [row.get("Max (rad/m)") for row in edited]
 
     invalid_starts: List[str] = []
-    for idx, (jt, start, length) in enumerate(zip(joint_types, start_states, link_lengths), start=1):
-        if jt == "revolute" and abs(start) > math.pi:
-            invalid_starts.append(f"Joint {idx}: start angle exceeds ±π rad; solver may be unstable.")
+    for idx, (jt, start, length, jmin, jmax) in enumerate(
+        zip(joint_types, start_states, link_lengths, joint_mins, joint_maxes), start=1
+    ):
+        lower_bound = jmin if jmin is not None else (-math.pi if jt == "revolute" else -length)
+        upper_bound = jmax if jmax is not None else (math.pi if jt == "revolute" else length)
+        if lower_bound >= upper_bound:
+            invalid_starts.append(f"Joint {idx}: min range must be less than max range.")
+        if start < lower_bound or start > upper_bound:
+            invalid_starts.append(
+                f"Joint {idx}: start ({start:.2f}) is outside its range [{lower_bound:.2f}, {upper_bound:.2f}] and may block convergence."
+            )
         if jt == "prismatic" and abs(start) > 2 * length:
             invalid_starts.append(
                 f"Joint {idx}: prismatic start ({start:.2f} m) exceeds twice its link length ({length:.2f} m) and may be unreachable."
@@ -189,6 +227,10 @@ def main():
         link_depths = [default_depth] * solved_dof
         link_masses = [default_mass] * solved_dof
 
+    if limit_mode == "Homogeneous limits":
+        joint_mins = [default_revolute_min if jt == "revolute" else default_prismatic_min for jt in joint_types]
+        joint_maxes = [default_revolute_max if jt == "revolute" else default_prismatic_max for jt in joint_types]
+
     robot = build_robot(
         dof=solved_dof,
         allow_prismatic=allow_prismatic,
@@ -199,6 +241,8 @@ def main():
         link_masses=link_masses,
         joint_types=joint_types,
         joint_notes=joint_notes,
+        joint_mins=joint_mins,
+        joint_maxes=joint_maxes,
         gravity=gravity,
     )
 
@@ -225,7 +269,7 @@ def main():
     st.divider()
     st.subheader("Dynamics-aware visualization")
     st.write(
-        "Drag inside the plot to rotate the view. Define a 3D target relative to the robot origin, then play the 60 FPS start→target motion (no stepwise jog buttons)."
+        "Drag inside the plot to rotate the view. Define a 3D target relative to the robot origin, tune solver type/steps, and set motion ranges before playing the 60 FPS start→target motion (no stepwise jog buttons)."
     )
     st.caption("Use the start (rad/m) column to set a non-singular home pose; the animation interpolates from that pose to the target solution.")
 
@@ -242,6 +286,15 @@ def main():
         st.warning(
             "Target lies beyond the nominal reach of the chain; convergence may fail. Reduce distance or extend link lengths/prismatic travel."
         )
+
+    max_steps = st.slider(
+        "Solver steps/iterations",
+        min_value=50,
+        max_value=1200,
+        value=400,
+        step=25,
+        help="Control how many update steps the chosen solver can take to seek the target (and shape the displayed optimal path).",
+    )
 
     solver = st.selectbox(
         "Inverse-kinematics solver",
@@ -276,24 +329,26 @@ def main():
 
     # IK solve
     if solver == "Damped least squares":
-        ik_states, converged = damped_least_squares_ik(
-            robot, target_point, st.session_state.joint_states, damping=0.02, max_iters=400
+        ik_states, converged, trajectory = damped_least_squares_ik(
+            robot, target_point, st.session_state.joint_states, damping=0.02, max_iters=max_steps
         )
     elif solver == "Newton-Raphson":
-        ik_states, converged = newton_raphson_ik(robot, target_point, st.session_state.joint_states, max_iters=300)
+        ik_states, converged, trajectory = newton_raphson_ik(
+            robot, target_point, st.session_state.joint_states, max_iters=max_steps
+        )
     elif solver == "Gradient descent":
-        ik_states, converged = gradient_descent_ik(
-            robot, target_point, st.session_state.joint_states, step_size=0.05, max_iters=600
+        ik_states, converged, trajectory = gradient_descent_ik(
+            robot, target_point, st.session_state.joint_states, step_size=0.05, max_iters=max_steps
         )
     else:
-        ik_states, converged = screw_enhanced_ik(
+        ik_states, converged, trajectory = screw_enhanced_ik(
             robot,
             target_point,
             st.session_state.joint_states,
             step_size=0.06,
             damping_base=0.015,
             momentum=0.12,
-            max_iters=500,
+            max_iters=max_steps,
         )
     st.session_state.joint_states = ik_states.tolist()
 
@@ -306,14 +361,17 @@ def main():
     end_effector = positions[-1]
     fig = render_robot_plot(positions, target_point, end_effector, robot.redundant_dof)
 
-    # Animation between home and target
+    # Animation follows the solver's trajectory (optimal path) between home and target
     home_state = np.array(start_states)
+    path_states = [np.array(s) for s in trajectory] if len(trajectory) > 0 else [home_state, ik_states]
+    if not np.allclose(path_states[0], home_state):
+        path_states.insert(0, home_state)
+    if not np.allclose(path_states[-1], ik_states):
+        path_states.append(ik_states)
+
     frames: List[go.Frame] = []
-    n_frames = 120
-    for i in range(n_frames + 1):
-        alpha = i / n_frames
-        interp_state = (1 - alpha) * home_state + alpha * ik_states
-        frame_positions = robot.joint_positions(interp_state)
+    for i, state in enumerate(path_states):
+        frame_positions = robot.joint_positions(state)
         frames.append(
             go.Frame(
                 data=[
@@ -392,12 +450,15 @@ def main():
         "joints": summary_table,
         "torque_budget": torque_budget,
         "gravity": robot.gravity,
+        "joint_limits": list(zip(joint_mins, joint_maxes)),
         "target": target_point.tolist(),
         "end_effector": end_effector.tolist(),
         "converged": converged,
         "home_state": home_state.tolist(),
         "start_states": start_states,
         "ik_solution": ik_states.tolist(),
+        "solver_max_steps": max_steps,
+        "solver_trajectory": [state.tolist() for state in path_states],
     }
     st.download_button("Download JSON report", data=json.dumps(report, indent=2), file_name="robot_report.json")
 

@@ -43,6 +43,8 @@ class Joint:
     note: str = ""
     max_torque: float = 0.0
     max_force: float = 0.0
+    min_state: float = -math.pi
+    max_state: float = math.pi
 
 
 @dataclass
@@ -102,6 +104,8 @@ def build_robot(
     link_masses: Sequence[float],
     joint_types: Sequence[JointType] | None = None,
     joint_notes: Sequence[str] | None = None,
+    joint_mins: Sequence[float] | None = None,
+    joint_maxes: Sequence[float] | None = None,
     gravity: float = 9.81,
 ) -> RobotModel:
     """Construct a RobotModel from user-edited link and joint tables.
@@ -129,13 +133,27 @@ def build_robot(
 
     if joint_notes is None:
         joint_notes = [""] * solved_dof
+    if joint_mins is None:
+        joint_mins = [None] * solved_dof
+    if joint_maxes is None:
+        joint_maxes = [None] * solved_dof
 
     joints: List[Joint] = []
     links: List[Link] = []
 
     for i in range(solved_dof):
         axis = AXES[i % len(AXES)]
-        joints.append(Joint(joint_type=joint_types[i], axis=axis, note=joint_notes[i]))
+        default_min = -math.pi if joint_types[i] == "revolute" else -link_lengths[i]
+        default_max = math.pi if joint_types[i] == "revolute" else link_lengths[i]
+        joints.append(
+            Joint(
+                joint_type=joint_types[i],
+                axis=axis,
+                note=joint_notes[i],
+                min_state=joint_mins[i] if joint_mins[i] is not None else default_min,
+                max_state=joint_maxes[i] if joint_maxes[i] is not None else default_max,
+            )
+        )
         links.append(
             Link(
                 length=link_lengths[i],
@@ -185,21 +203,23 @@ def damped_least_squares_ik(
     max_iters: int = 200,
     damping: float = 0.01,
     tol: float = 1e-3,
-) -> Tuple[np.ndarray, bool]:
+) -> Tuple[np.ndarray, bool, List[np.ndarray]]:
     states = np.array(initial_states, dtype=float)
+    trajectory: List[np.ndarray] = [states.copy()]
     for _ in range(max_iters):
         transforms = robot.homogenous_transforms(states)
         current = transforms[-1][:3, 3]
         error = target - current
         if np.linalg.norm(error) < tol:
-            return states, True
+            return states, True, trajectory
 
         J = _jacobian(robot, transforms, target)
         J_pos = J[:3, :]
         damping_matrix = (damping**2) * np.eye(J_pos.shape[0])
         delta = J_pos.T @ np.linalg.inv(J_pos @ J_pos.T + damping_matrix) @ error
-        states += delta
-    return states, False
+        states = np.clip(states + delta, [j.min_state for j in robot.joints], [j.max_state for j in robot.joints])
+        trajectory.append(states.copy())
+    return states, False, trajectory
 
 
 def newton_raphson_ik(
@@ -208,20 +228,22 @@ def newton_raphson_ik(
     initial_states: Sequence[float],
     max_iters: int = 200,
     tol: float = 1e-3,
-) -> Tuple[np.ndarray, bool]:
+) -> Tuple[np.ndarray, bool, List[np.ndarray]]:
     states = np.array(initial_states, dtype=float)
+    trajectory: List[np.ndarray] = [states.copy()]
     for _ in range(max_iters):
         transforms = robot.homogenous_transforms(states)
         current = transforms[-1][:3, 3]
         error = target - current
         if np.linalg.norm(error) < tol:
-            return states, True
+            return states, True, trajectory
 
         J = _jacobian(robot, transforms, target)
         J_pos = J[:3, :]
         delta = np.linalg.pinv(J_pos) @ error
-        states += delta
-    return states, False
+        states = np.clip(states + delta, [j.min_state for j in robot.joints], [j.max_state for j in robot.joints])
+        trajectory.append(states.copy())
+    return states, False, trajectory
 
 
 def gradient_descent_ik(
@@ -231,20 +253,22 @@ def gradient_descent_ik(
     step_size: float = 0.05,
     max_iters: int = 400,
     tol: float = 1e-3,
-) -> Tuple[np.ndarray, bool]:
+) -> Tuple[np.ndarray, bool, List[np.ndarray]]:
     states = np.array(initial_states, dtype=float)
+    trajectory: List[np.ndarray] = [states.copy()]
     for _ in range(max_iters):
         transforms = robot.homogenous_transforms(states)
         current = transforms[-1][:3, 3]
         error = target - current
         if np.linalg.norm(error) < tol:
-            return states, True
+            return states, True, trajectory
 
         J = _jacobian(robot, transforms, target)
         J_pos = J[:3, :]
         delta = step_size * (J_pos.T @ error)
-        states += delta
-    return states, False
+        states = np.clip(states + delta, [j.min_state for j in robot.joints], [j.max_state for j in robot.joints])
+        trajectory.append(states.copy())
+    return states, False, trajectory
 
 
 def screw_enhanced_ik(
@@ -256,7 +280,7 @@ def screw_enhanced_ik(
     momentum: float = 0.1,
     max_iters: int = 400,
     tol: float = 1e-3,
-) -> Tuple[np.ndarray, bool]:
+) -> Tuple[np.ndarray, bool, List[np.ndarray]]:
     """IK variant inspired by screw-theory refinements with adaptive damping.
 
     The method normalizes Jacobian columns (screw axes), adapts damping based on
@@ -267,13 +291,14 @@ def screw_enhanced_ik(
 
     states = np.array(initial_states, dtype=float)
     prev_delta = np.zeros_like(states)
+    trajectory: List[np.ndarray] = [states.copy()]
 
     for _ in range(max_iters):
         transforms = robot.homogenous_transforms(states)
         current = transforms[-1][:3, 3]
         error = target - current
         if np.linalg.norm(error) < tol:
-            return states, True
+            return states, True, trajectory
 
         J = _jacobian(robot, transforms, target)
         J_pos = J[:3, :]
@@ -293,10 +318,11 @@ def screw_enhanced_ik(
         delta = step_size * (weighted_J.T @ np.linalg.solve(lhs, error))
         delta += momentum * prev_delta
 
-        states += delta
+        states = np.clip(states + delta, [j.min_state for j in robot.joints], [j.max_state for j in robot.joints])
         prev_delta = delta
+        trajectory.append(states.copy())
 
-    return states, False
+    return states, False, trajectory
 
 
 def joint_summary(robot: RobotModel) -> List[dict]:
@@ -311,6 +337,7 @@ def joint_summary(robot: RobotModel) -> List[dict]:
                 "Length (m)": link.length,
                 "Mass (kg)": link.mass,
                 "Inertia (Ix, Iy, Iz)": (ix, iy, iz),
+                "Range (min, max)": (joint.min_state, joint.max_state),
                 "Torque/Force budget": joint.max_torque if joint.joint_type == "revolute" else joint.max_force,
                 "Note": joint.note,
             }
