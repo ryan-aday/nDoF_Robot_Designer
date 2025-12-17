@@ -189,7 +189,7 @@ def generate_fanuc_template(dof, joint_types, start_state, target_state, steps):
     template = """-- Minimal FANUC-style TP pseudo-code for a {dof}-axis robot
 -- Populate joint targets from the JSON report and insert controller-specific
 -- speed/accel/safety details before deployment.
--- Joint types: {', '.join(joint_types)}
+-- Joint types: {joint_types_label}
 
 PROGRAM START_TO_TARGET
   ! Move to start
@@ -212,7 +212,7 @@ PROGRAM TARGET_TO_START
 END
 """.format(
         dof=dof,
-        joint_types=", ".join(joint_types),
+        joint_types_label=", ".join(joint_types),
         start_state=fmt_list(start_state),
         target_state=fmt_list(target_state),
         steps=steps,
