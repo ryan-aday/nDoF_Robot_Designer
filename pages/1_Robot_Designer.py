@@ -53,23 +53,36 @@ def build_frame_data(
                 axis_norm = np.linalg.norm(axis_world) + 1e-9
             axis_world = axis_world / axis_norm
 
-            leg_vec = curr - prev
-            leg_norm = np.linalg.norm(leg_vec)
-            if leg_norm < 1e-9:
-                leg_dir = np.array([1.0, 0.0, 0.0])
+            leg_vec_prev = curr - prev
+            leg_prev_norm = np.linalg.norm(leg_vec_prev)
+            if leg_prev_norm < 1e-9:
+                leg_dir_prev = np.array([1.0, 0.0, 0.0])
             else:
-                leg_dir = leg_vec / leg_norm
+                leg_dir_prev = leg_vec_prev / leg_prev_norm
 
-            # Force the offset to be perpendicular to the leg direction
-            axis_proj = axis_world - np.dot(axis_world, leg_dir) * leg_dir
+            if idx < len(positions) - 1:
+                leg_vec_next = positions[idx + 1] - curr
+                leg_next_norm = np.linalg.norm(leg_vec_next)
+                if leg_next_norm < 1e-9:
+                    leg_dir_next = leg_dir_prev
+                else:
+                    leg_dir_next = leg_vec_next / leg_next_norm
+            else:
+                leg_dir_next = leg_dir_prev
+
+            # Choose an offset direction perpendicular to both adjacent legs when possible
+            axis_proj = np.cross(leg_dir_prev, leg_dir_next)
             proj_norm = np.linalg.norm(axis_proj)
             if proj_norm < 1e-9:
-                # Pick an arbitrary perpendicular direction to the leg
-                fallback = np.array([1.0, 0.0, 0.0])
-                if abs(np.dot(fallback, leg_dir)) > 0.9:
-                    fallback = np.array([0.0, 1.0, 0.0])
-                axis_proj = np.cross(leg_dir, fallback)
-                proj_norm = np.linalg.norm(axis_proj) + 1e-9
+                # Fall back to a perpendicular projection of the joint axis
+                axis_proj = axis_world - np.dot(axis_world, leg_dir_prev) * leg_dir_prev
+                proj_norm = np.linalg.norm(axis_proj)
+                if proj_norm < 1e-9:
+                    fallback = np.array([1.0, 0.0, 0.0])
+                    if abs(np.dot(fallback, leg_dir_prev)) > 0.9:
+                        fallback = np.array([0.0, 1.0, 0.0])
+                    axis_proj = np.cross(leg_dir_prev, fallback)
+                    proj_norm = np.linalg.norm(axis_proj) + 1e-9
             axis_proj = axis_proj / proj_norm
 
             cyl_length = robot.joints[idx - 1].body_length
