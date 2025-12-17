@@ -15,6 +15,7 @@ e budget.
 - Display the solved joint states (radians/meters and degrees for revolute joints) alongside the forward solution for traceability against inverse-kinematics references.
 - Visualize the reachable workspace via a sampled point cloud surfaced into an opaque convex envelope to understand why targets may be unreachable under the current limits and axes.
 - Screw theory and forward-kinematics formulas page for twists, exponential coordinates, DH snippets, and wrench inspection.
+- Axial Flux Motor Designer for early geometry/pole sizing (shear-stress based torque sizing, pole heuristics, magnet band estimates) with references to coreless motor design literature.
 - Downloadable JSON report capturing the solved kinematics and dynamics summary, plus a C code generator to drive start→target→start motion on hardware.
 
 ## Running the app
@@ -38,3 +39,5 @@ streamlit run app.py
 - Fu et al. [Trajectory smoothing for manipulators](https://www.witpress.com/Secure/elibrary/papers/HPSM25/HPSM25011FU1.pdf).
 - Tabak & Moosavian. [Redundant manipulator optimization](https://www.sciencedirect.com/science/article/abs/pii/S0094114X05001424).
 - Addison. [Homogeneous transforms with Denavit–Hartenberg](https://automaticaddison.com/homogeneous-transformation-matrices-using-denavit-hartenberg/).
+- Batzel et al. [Coreless axial-flux motor sizing](https://cd14.ijme.us/papers/088__Todd%20D.%20Batzel,%20Andrew%20M.%20Skraba,%20Ray%20D.%20Massi.pdf).
+- Caden Kraft. [Designing a coreless axial flux motor](https://cadenkraft.com/designing-a-coreless-axial-flux-motor-part-1/).
