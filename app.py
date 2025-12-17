@@ -16,7 +16,7 @@ st.markdown(
     Use the sidebar to navigate between pages:
     - **Robot Designer & Dynamics**: Build the robot, compute inertia/torque budgets, and visualize motion.
     - **Fundamental Formulas**: Interactive calculators for twists, wrenches, forward-kinematics snippets, and exponential coordinates.
-    - **C Code Generator**: Turn your JSON report into scaffolded C to drive hardware start→target→start motion.
+    - **Code Generator**: Turn your JSON report into scaffolded C/C++ or vendor-style templates to drive hardware start→target→start motion.
     - **Axial Flux Motor Designer**: Quick geometry and pole-count sizing for coreless axial flux machines.
 
     Built with reference to [screw theory](https://en.wikipedia.org/wiki/Screw_theory),

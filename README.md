@@ -16,7 +16,7 @@ e budget.
 - Visualize the reachable workspace via a sampled point cloud surfaced into an opaque convex envelope to understand why targets may be unreachable under the current limits and axes.
 - Screw theory and forward-kinematics formulas page for twists, exponential coordinates, DH snippets, and wrench inspection.
 - Axial Flux Motor Designer for early geometry/pole sizing (shear-stress based torque sizing, pole heuristics, magnet band estimates) with references to coreless motor design literature.
-- Downloadable JSON report capturing the solved kinematics and dynamics summary, plus a C code generator to drive start→target→start motion on hardware.
+- Downloadable JSON report capturing the solved kinematics and dynamics summary, plus a multi-target code generator (C/C++/FANUC/KUKA pseudo) to drive start→target→start motion on hardware.
 
 ## Running the app
 ```bash
